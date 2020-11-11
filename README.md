@@ -13,28 +13,16 @@ $ pip install sqlvis
 
 ## Usage
 
-For the minimum working example below, please make sure to download shoppingDB.sql from the data folder. 
+For the minimum working example below, please make sure to download shopping.db from the data folder. 
 
 ```python
 from SQLvis import vis
 import sqlite3
 
-# This creates/connects to a database instance on your local machine.
 conn = sqlite3.connect('shopping.db')
 cur = conn.cursor()
 ```
-```python
-# This cell populates the database.
-# You can only populate each database once, so comment this cell out once it is finished.
 
-# Replace this line with the correct location of the SQL file.
-db_location = 'shoppingDB.sql'
-
-f = open(db_location,'r')
-sql = f.read()
-cur.executescript(sql)
-
-```
 ```python
 # Retrieve the shema from the db connection
 schema = vis.schema_from_conn(conn)
@@ -45,6 +33,7 @@ query = '''
 SELECT cName FROM customer;
 '''
 
+# Generate the visualization.
 vis.visualize(query, schema)
 ```
 
@@ -74,7 +63,7 @@ WHERE city = "Amsterdam" OR city = "Utrecht";
 
 | Visualization&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;| Explanation                                                  |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
-| <img src="https://github.com/Giraphne/SQLvis/raw/main/images/selection_condition.png"> | Each node in the visualization can be expanded to show the schema of the table. Then, the schema is highlighted based on the contents of the query. Selection on columns is highlighted in orange. Here the query contains SELECT *, so all columns are highlighted. Conditions are highlighted in green. This query contains two conditions, both on the city attribute. |
+| <img src="https://github.com/Giraphne/SQLvis/raw/main/images/selection_condition.png"> | Each node in the visualization can be expanded to show the schema of the table. The expanded schema is highlighted based on the contents of the query. Selection on columns is highlighted in orange. Here the query contains SELECT *, so all columns are highlighted. Conditions are highlighted in green. This query contains two conditions, both on the city attribute. |
 
 ### Example 3
 
@@ -82,11 +71,12 @@ WHERE city = "Amsterdam" OR city = "Utrecht";
 ```sql
 SELECT c.cName 
 FROM customer AS c 
-WHERE EXISTS (SELECT pr.pID 
-	FROM purchase AS p, product AS pr 
-	WHERE p.cID = c.cID 
-	AND p.pID = pr.pID 
-	AND pr.pID < 10);
+WHERE EXISTS (
+SELECT pr.pID 
+    FROM purchase AS p, product AS pr 
+    WHERE p.cID = c.cID 
+    AND p.pID = pr.pID 
+    AND pr.pID < 10);
 ```
 | Visualization&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Explanation                                                  |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
