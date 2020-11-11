@@ -44237,13 +44237,19 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
       var columnObj = ast.columns[index]['expr'] || '*';
       if (columnObj == '*') {
         var table = ast.from[0]['table'];
+        // Check if there is an alias for this table
+        for (alias in aliases) {
+          if (aliases[alias] == table) {
+            var tableA = alias;
+          }
+        }
 
         for (index in schema[table]){
           column = schema[table][index];
-          if (table in selection) {
-            selection[table][column] = [''];
+          if (tableA in selection) {
+            selection[tableA][column] = [''];
           } else {
-            selection[table] = {[column]: ['']};
+            selection[tableA] = {[column]: ['']};
           }
         }
       // If there is no star and the select is a simple column reference, add it to the list of selections.
