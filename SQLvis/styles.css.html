@@ -1,0 +1,120 @@
+<!-- Google font -->
+<link href="https://fonts.googleapis.com/css?family=PT+Sans&display=swap" rel="stylesheet">
+
+<style>
+.output_wrapper, .output {
+    height:auto;
+    max-height:1000px;  /* your desired max-height here */
+}
+.output_scroll {
+    box-shadow:none !important;
+    webkit-box-shadow:none !important;
+}
+
+div.output_area img, div.output_area svg {
+	height:400px !important;
+	width: 100% !important;
+}
+
+.output_subarea * {
+	color: unset;
+	font-size: unset;
+	font-family: unset;
+	font-style: unset;
+	border: unset;
+	padding: unset;
+	background: unset;
+	margin: unset;
+	border-radius: unset;
+	position: unset;
+	float: unset;
+}
+
+.output_subarea {
+	font-family: 'PT Sans', sans-serif !important;
+	color: black;
+	font-size: 12px !important;
+}
+
+.node.with rect {
+	transform: scale(1.3, 0.8) rotate(45deg);
+}
+
+/* dit disabled dat je text kunt selecteren in nodes */
+svg .node text {
+	!important;
+	pointer-events: none;
+	-webkit-user-select: none;
+	user-select: none;
+}
+
+.output_subarea .node table td, .node table th {
+	border: 1px solid rgb(147, 150, 209);
+	padding: 1px 4px;
+	font-size: 12px;
+}
+
+.output_subarea .node td.condition, .node th.condition {
+	border-left: 2px solid rgb(113,207,61);
+	border-right: 2px solid rgb(113,207,61);
+	background-color: rgba(113,207,61, 0.2);
+}
+
+.output_subarea .node tr:first-child td.condition, 
+.node tr:first-child th.condition {
+	border-top: 2px solid rgb(113,207,61);
+}
+
+.output_subarea .node tr:last-child td.condition, 
+.node tr:last-child th.condition {
+	border-bottom: 2px solid rgb(113,207,61);
+}
+
+.output_subarea .node td.selection, .node th.selection {
+	border-left: 2px solid rgb(255, 160, 0);
+	border-right: 2px solid rgb(255, 160, 0);
+	background-color: rgba(255, 160, 0, 0.2);
+}
+.output_subarea .node tr:first-child td.selection, 
+.output_subarea .node tr:first-child th.selection {
+	border-top: 2px solid rgb(255, 160, 0);
+}
+
+.output_subarea .node tr:last-child td.selection, 
+.output_subarea .node tr:last-child th.selection {
+	border-bottom: 2px solid rgb(255, 160, 0);
+}
+
+.output_subarea .node td.condition.selection div {
+	margin: 2px 0px 2px 0px;
+	border: 2px solid rgb(113,207,61);
+	background-color: rgba(113,207,61, 0.2);
+}
+
+/*.output_subarea text {
+	font-weight: 300;
+	font-family: "Helvetica Neue", Helvetica, Arial, sans-serf;
+	font-size: 14px;
+}*/
+
+.output_subarea .nodes rect {
+	fill: rgb(228, 230, 244);
+	color: black;
+	stroke: rgb(77,52,239);
+	stroke-width: 2px;
+}
+
+.output_subarea .node .alias {
+	color: rgb(77,52,239);
+}
+
+.output_subarea g.label div {
+	text-align: center;
+} 
+
+.output_subarea .edgePath path {
+	stroke: #333;
+	fill: #333;
+	stroke-width: 1.5px;
+}
+</style>
