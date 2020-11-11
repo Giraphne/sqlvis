@@ -5,13 +5,13 @@ This library works best in Chrome.
 
 ## Installation
 
-The esiest way is to install via pip:
+The easiest way is to install via pip:
 
 ```
 $ pip install sqlvis
 ```
 
-## Example
+## Usage
 
 For the minimum working example below, please make sure to download shoppingDB.sql from the data folder. 
 
@@ -42,7 +42,7 @@ schema = vis.schema_from_conn(conn)
 ```
 ```python
 query = '''
-select cName from customer;
+SELECT cName FROM customer;
 '''
 
 vis.visualize(query, schema)
