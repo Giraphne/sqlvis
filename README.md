@@ -72,7 +72,7 @@ WHERE city = "Amsterdam" OR city = "Utrecht";
 SELECT c.cName 
 FROM customer AS c 
 WHERE EXISTS (
-SELECT pr.pID 
+    SELECT pr.pID 
     FROM purchase AS p, product AS pr 
     WHERE p.cID = c.cID 
     AND p.pID = pr.pID 
