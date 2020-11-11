@@ -16,7 +16,7 @@ $ pip install sqlvis
 For the minimum working example below, please make sure to download shopping.db from the data folder. 
 
 ```python
-from SQLvis import vis
+from sqlvis import vis
 import sqlite3
 
 conn = sqlite3.connect('shopping.db')

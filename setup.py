@@ -4,7 +4,7 @@ with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
-    name="SQLvis", 
+    name="sqlvis", 
     version="0.0.1",
     author="Daphne Miedema",
     author_email="daphnemiedema@hotmail.com",
