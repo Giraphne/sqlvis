@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="sqlvis", 
-    version="0.0.1",
+    version="0.0.4",
     author="Daphne Miedema",
     author_email="daphnemiedema@hotmail.com",
     description="A package to represent SQL queries as graphs.",
