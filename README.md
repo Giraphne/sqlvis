@@ -1,7 +1,8 @@
 # SQLvis
 
-A library to generate a graph-based visualization of SQL queries in Jupyter.
-This library works best in Chrome.
+A library to generate a *graph-based* visualization of SQL queries in **Jupyter Notebooks**. More information on Jupyter Notebooks is [here](https://jupyter.org).
+
+This library works best in **Chrome**.
 
 ## Installation
 
@@ -10,6 +11,15 @@ The easiest way is to install via pip:
 ```
 $ pip install sqlvis
 ```
+
+
+
+## Dependencies
+
+* [Pandas](https://github.com/pandas-dev/pandas) 
+  * ```$ pip install pandas```
+
+
 
 ## Usage
 
@@ -20,7 +30,6 @@ from sqlvis import vis
 import sqlite3
 
 conn = sqlite3.connect('shopping.db')
-cur = conn.cursor()
 ```
 
 ```python
@@ -37,7 +46,10 @@ SELECT cName FROM customer;
 vis.visualize(query, schema)
 ```
 
+
+
 ## Visualization explanation
+
 SQLvis draws graph representations of SQL queries. Below, I show some queries and visualization examples.
 
 ### Example 1
