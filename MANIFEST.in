@@ -1,3 +1,3 @@
-include SQLvis/styles.css.html
-include SQLvis/visualize.js
-include SQLvis/atelier-forest.light.css
+include sqlvis/styles.css.html
+include sqlvis/visualize.js
+include sqlvis/atelier-forest.light.css

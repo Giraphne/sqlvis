@@ -11,9 +11,9 @@ setuptools.setup(
     description="A package to represent SQL queries as graphs.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/Giraphne/SQLvis",
+    url="https://github.com/Giraphne/sqlvis",
     packages=setuptools.find_packages(),
-    package_data={'': ['SQLvis/*']},
+    package_data={'': ['sqlvis/*']},
     include_package_data=True,
     classifiers=[
         "Programming Language :: Python :: 3",
