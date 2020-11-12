@@ -4,7 +4,6 @@ import os
 import pandas as pd
 import time
 dir_path = os.path.dirname(os.path.realpath(__file__))
-print(dir_path)
 
 
 
@@ -38,7 +37,7 @@ def visualize(s, schema):
     
     shortSchema = json.dumps(schema)
 
-    return Javascript("""
+    return display(Javascript("""
         (function(element) {
             var query = '"""+query+ """';
             var schema = """+shortSchema+""";
@@ -47,4 +46,4 @@ def visualize(s, schema):
                 viz(element.get(0), query, schema)
             });
         })(element);
-    """)
+    """))
