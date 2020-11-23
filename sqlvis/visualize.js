@@ -43886,6 +43886,21 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
       if (levels[i] != 0) {
         if (levels[i].length > 1) {
           var color = colors[parseInt(levels[i].slice(-1))];
+          var parentLevel = levels[i].slice(0, -2)
+          if (parentLevel in levels) {
+            var parentName
+            var childName
+            for (var j in vertices) {
+              if(vertices[j].level == parentLevel) {
+                parentName = vertices[j].parent
+              } else if (vertices[j].level == levels[i]) {
+                childName = vertices[j].parent
+              }
+            }
+            if (typeof parentName == 'string' && typeof childName == 'string') {
+              graph.setParent(parentName, childName)
+            }
+          }
         } else {
           color = colors[levels[i]];
         }
@@ -44355,9 +44370,10 @@ function modifyNode(nodes, instance) {
 function generateGraphExpression(element, ast, aliases, schema, level, parent, tables) {
   if (ast.type == 'binary_expr') {
     // Special case: equality predicate
-    if (ast.left.type == 'column_ref' && ast.right.type != 'select') {
+    if (ast.left.type == 'column_ref' && ast.right.type != 'select' && ast.right.type != 'expr_list') {
       return [[], getLinks(ast, aliases, schema, tables)];
     } else if (ast.left.type == 'column_ref' && ast.right.type == 'select') {
+
       //something left
       // No link needs to be generated as it is not possible to connect an edge to a container.
 
@@ -44369,7 +44385,38 @@ function generateGraphExpression(element, ast, aliases, schema, level, parent, t
         level + 1, level);
 
       return [rNodes, rLinks];
+    } else if (ast.left.type == 'column_ref' && ast.right.type == 'expr_list') {    
+      var nodes = []
+      var links = []
+
+      for (var i in ast.right.value) {
+        var [rNodes, rLinks] = generateGraphTopLevel(
+        element,
+        ast.right.value[i],
+        aliases, schema,
+        level + 1, ast.operator);
+
+        nodes = nodes.concat(rNodes);
+        links = links.concat(rLinks);
+      }
+      
+      //Add the link for where x not in y
+      var column = ast.left.column
+      var table = ast.left.table || getTable(column, schema, tables)[0]
+      var operator = ast.operator
+      var link = {};
+      link.sourceAlias = table
+      link.source = table
+      link.targetAlias = operator
+      link.target = operator
+      link.label = [column + ' ' + operator]
+      link.type = 'link'
+
+      links = links.concat(link)
+
+      return [nodes, links];
     }
+
 
     var [lNodes, lLinks] = generateGraphExpression(
       element,
