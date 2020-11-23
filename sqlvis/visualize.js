@@ -44554,6 +44554,7 @@ function getTable(column, schema, tables=null) {
 define('viz', ['d3'], function (d3) {
   var d3 = d3;
   function visualizeMain(container, query, schema){
+    query = query.trim()
     setSelections({})
     setConditions({})
     

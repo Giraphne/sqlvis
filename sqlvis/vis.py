@@ -32,8 +32,11 @@ def visualize(s, schema):
     display(Javascript(filename= dir_path + '/visualize.js'))
 
     #First, escape all quotation marks.
-    q = s.replace('"', '\"')
-    query = q.replace('\n', '')
+    query = s.replace('"', '\"')
+    query = query.replace('\n', ' ')
+    query = query.replace('\r', ' ')
+    query = query.replace('\s+', ' ')
+
     
     shortSchema = json.dumps(schema)
 
