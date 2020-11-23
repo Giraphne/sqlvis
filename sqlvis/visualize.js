@@ -11842,9 +11842,9 @@ var parse_sql = peg$parse;
           svgPathsEnter.append('path').attr('class', 'path').attr('d', function (e) {
             var edge = g.edge(e);
             var sourceElem = g.node(e.v).elem;
-            var points = _.range(edge.points.length).map(function () {
+            var points = sourceElem ? _.range(edge.points.length).map(function () {
               return getCoords(sourceElem)
-            });
+            }) : []; // * MOD *: Hack around sourceElem being NULL
             return createLine(edge, points)
           });
           svgPathsEnter.append('defs');
@@ -33746,6 +33746,7 @@ THE SOFTWARE.
                                 var maxHeight = _.max(_.map(layer, function (v) {
                                   return g.node(v).height
                                 }));
+                                if (!maxHeight) maxHeight = 1; // ** MOD **
                                 _.forEach(layer, function (v) {
                                   g.node(v).y = prevY + maxHeight / 2
                                 });
