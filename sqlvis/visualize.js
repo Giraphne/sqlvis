@@ -44290,7 +44290,7 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
 
         var nodeTables = {};
         for (var i in nodes) {
-          nodeTables[nodes[i].label]=nodes[i].alias;
+          nodeTables[nodes[i].label] = nodes[i].alias  || nodes[i].label;
         }
         // There may be more instances of a table, so check if we get the correct alias (present in this subquery).
         var table = columnObj['table'] || nodeTables[getTable(column, schema, tables)[0]];
