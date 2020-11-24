@@ -44403,13 +44403,20 @@ function generateGraphExpression(element, ast, aliases, schema, level, parent, t
         links = links.concat(rLinks);
       }
       
-      //Add the link for where x not in y
+      //Add the link to the operator container.
       var column = ast.left.column
       var table = ast.left.table || getTable(column, schema, tables)[0]
+      
+      // Check if there is an alias for this table
+      for (var alias in aliases) {
+        if (aliases[alias] == table) {
+          var tableA = alias;
+        }
+      }
       var operator = ast.operator
       var link = {};
-      link.sourceAlias = table
-      link.source = table
+      link.sourceAlias = tableA || table
+      link.source = tableA || table
       link.targetAlias = operator
       link.target = operator
       link.label = [column + ' ' + operator]
