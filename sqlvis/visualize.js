@@ -44256,6 +44256,9 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
             var tableA = alias;
           }
         }
+        if (!tableA) {
+          var tableA = table;
+        }
 
         for (index in schema[table]){
           column = schema[table][index];
