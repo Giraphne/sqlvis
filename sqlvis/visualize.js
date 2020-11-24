@@ -44436,6 +44436,7 @@ function generateGraphExpression(element, ast, aliases, schema, level, parent, t
   } else if (ast.type == 'unary_expr') {
     return generateGraphUnaryExpression(element, ast, aliases, schema, level+1, level);
   } else {
+    alert("Something might be wrong with your where clause, please check your query.")
     throw Error('Unknown where type: ' + ast.type);
   }
 }
