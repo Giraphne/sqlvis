@@ -44489,7 +44489,7 @@ function getLinks(node, aliases, schema, tables) {
     }
     var leftFullName = aliases[leftTable] || leftTable;
     var text = leftFullName + '.' + leftColumn;
-    link['source'] = leftFullName;
+    link['source'] = leftTable; //FIXME
 
     // Check if there is an unused alias for this link.
     if (leftTable == leftFullName) {
