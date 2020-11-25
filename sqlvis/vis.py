@@ -32,21 +32,22 @@ def visualize(s, schema):
     display(Javascript(filename= dir_path + '/visualize.js'))
 
     #First, escape all quotation marks.
-    query = s.replace('"', '\"')
+    query = s.replace("'", "\\'")
     query = query.replace('\n', ' ')
     query = query.replace('\r', ' ')
     query = query.replace('\s+', ' ')
-
     
     shortSchema = json.dumps(schema)
 
-    return display(Javascript("""
-        (function(element) {
-            var query = '"""+query+ """';
-            var schema = """+shortSchema+""";
+    command = """
+        (function(element) {{
+            var query = '{0}';
+            var schema = {1};
 
-            require(['viz'], function(viz) {
+            require(['viz'], function(viz) {{
                 viz(element.get(0), query, schema)
-            });
-        })(element);
-    """))
+            }});
+        }})(element);
+        """.format(query, shortSchema)
+
+    return display(Javascript(command))
