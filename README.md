@@ -2,7 +2,19 @@
 
 A library to generate a *graph-based* visualization of SQL queries in **Jupyter Notebooks**. More information on Jupyter Notebooks is [here](https://jupyter.org).
 
-This library works best in **Chrome**.
+This library works best in **Chrome**. Please note that this is a research prototype, and therefore may be incomplete. If you find any issues or would like any extensions, feel free to post them under the Issues tab.
+
+If you use SQLvis in your research, please cite this paper:
+
+```
+@inproceedings{SQLVis,
+  author = {Miedema, Daphne and Fletcher, George},
+  title = {{SQLVis}: Visual Query Representations for Supporting SQL Learners},
+  booktitle = {2021 IEEE Symposium on Visual Languages and Human-Centric Computing (VL/HCC)},
+  publisher = {IEEE},
+  year = {2021}
+}
+```
 
 ## Installation
 
@@ -93,10 +105,6 @@ WHERE EXISTS (
 | Visualization&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp; | Explanation                                                  |
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | <img src="https://github.com/Giraphne/SQLvis/raw/main/images/subquery.png"> | This visualization displays a subquery. The two tables in the subquery are purchase and product. You can see that these are wrapped in a colored rectangle. The visualization can als represent nesting on higher levels. The deeper the nesting, the darker the color. |
-
-
-
-This library is very alpha. If you find any issues or inconsistencies, please create an issue or message me.
 
 
 
