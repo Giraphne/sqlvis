@@ -44239,87 +44239,115 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
     }
   }
 
+
   // Store the contents of the top level select predicate for highlighting.
-  if (level == 0) {
-    var selection = getSelections() || {};
-    var tables = [];
-    // Store all the tables that are used on the top level query
-    for (index in ast.from) {
-      tables.push(ast.from[index]['table']);
-    }
-    for (var index in ast.columns) {
-      // If the query selects all columns, save them all to selections.
-      var columnObj = ast.columns[index]['expr'] || '*';
-      if (columnObj == '*') {
-        var table = ast.from[0]['table'];
-        // Check if there is an alias for this table
-        for (alias in aliases) {
-          if (aliases[alias] == table) {
-            var tableA = alias;
-          }
-        }
-        if (!tableA) {
-          var tableA = table;
-        }
+  var selection = getSelections() || {};
+  var tables = [];
+  // Store all the tables that are used on the top level query
+  for (index in ast.from) {
+    tables.push(ast.from[index]['table']);
+  }
+  for (var index in ast.columns) {
+    // If the query selects all columns, save them all to selections.
+    var columnObj = ast.columns[index]['expr'] || '*';
+    if (columnObj == '*' && level == 0) {
+      var table = ast.from[0]['table'];
 
-        for (index in schema[table]){
-          column = schema[table][index];
-          if (tableA in selection) {
-            selection[tableA][column] = [''];
-          } else {
-            selection[tableA] = {[column]: ['']};
-          }
+      // Check if there is an alias for this table
+      for (alias in aliases) {
+        if (aliases[alias] == table) {
+          var tableA = alias;
         }
-      // If there is no star and the select is a simple column reference, add it to the list of selections.
-      } else if (columnObj['type'] == 'column_ref') {
-        var column = columnObj['column'];
-
-        var table = columnObj['table'] || getTable(column, schema, tables)[0];
-        // Check if there is an alias for this table
-        for (alias in aliases) {
-          if (aliases[alias] == table) {
-            var table = alias;
-          }
-        }
-
-        if (table in selection) {
-          selection[table][column] = [''];
+      }
+      if (!tableA) {
+        var tableA = table;
+      }
+      for (index in schema[table]){
+        column = schema[table][index];
+        if (tableA in selection) {
+          selection[tableA][column] = [''];
         } else {
-          selection[table] = {[column]: ['']};
+          selection[tableA] = {[column]: ['']};
         }
-      // If there is no star and this element is a SQL aggregation, add it to the list of aggregations.
-      } else if (columnObj['type'] == 'aggr_func') {
-        var aggregation =  columnObj['name'];
-        var columnObj = columnObj['args']['expr'];
-        var column = columnObj['column'];
+      }
+    // If there is no star and the select is a simple column reference, add it to the list of selections.
+    } else if (columnObj['type'] == 'column_ref' && level == 0) {
+      var column = columnObj['column'];
 
-        var nodeTables = {};
-        for (var i in nodes) {
-          nodeTables[nodes[i].label] = nodes[i].alias  || nodes[i].label;
+      var table = columnObj['table'] || getTable(column, schema, tables)[0];
+      // Check if there is an alias for this table
+      for (alias in aliases) {
+        if (aliases[alias] == table) {
+          var table = alias;
         }
-        // There may be more instances of a table, so check if we get the correct alias (present in this subquery).
-        var table = columnObj['table'] || nodeTables[getTable(column, schema, tables)[0]];
-        
-        // It is only a selection if we select in the top level
-        if (level == 0) {
-          selection = addSelection(selection, aggregation, table, column, aliases);
-        } else {
-          // Else we only need to add the aggregation string.
-          var subCondition = {};
-          subCondition.column = column;
-          subCondition.value = aggregation;
-          subCondition.source = aliases[table];
-          subCondition.sourceAlias = table;
-          subCondition.type = 'condition';
+      }
 
-          links = links.concat(subCondition);
-        }
+      if (table in selection) {
+        selection[table][column] = [''];
       } else {
+        selection[table] = {[column]: ['']};
+      }
+    // If there is no star and this element is a SQL aggregation, add it to the list of aggregations.
+    } else if (columnObj['type'] == 'aggr_func') {
+      var aggregation =  columnObj['name'];
+      var columnObj = columnObj['args']['expr'];
+      var column = columnObj['column'];
+
+      var nodeTables = {};
+      for (var i in nodes) {
+        nodeTables[nodes[i].label]=nodes[i].alias || nodes[i].label;
+      }
+      // There may be more instances of a table, so check if we get the correct alias (present in this subquery).
+      var table = columnObj['table'] || nodeTables[getTable(column, schema, tables)[0]];
+      
+      // It is only a selection if we select in the top level
+      if (level == 0) {
+        selection = addSelection(selection, aggregation, table, column, aliases);
+      } else {
+        // Else we only need to add the aggregation string.
+        var subCondition = {};
+        subCondition.column = column;
+        subCondition.value = aggregation;
+        subCondition.source = aliases[table];
+        subCondition.sourceAlias = table;
+        subCondition.type = 'condition';
+
+        links = links.concat(subCondition);
+      }
+    } else if (columnObj['type'] == 'binary_expr') {
+      var column = columnObj.left.column || columnObj.right.column
+      var operator = columnObj.operator
+      var mutation = columnObj.left.value || columnObj.right.value
+      var aggregation = '' + mutation + operator
+
+      var nodeTables = {};
+      for (var i in nodes) {
+        nodeTables[nodes[i].label]=nodes[i].alias || nodes[i].label;
+      }
+      // There may be more instances of a table, so check if we get the correct alias (present in this subquery).
+      var table = columnObj['table'] || nodeTables[getTable(column, schema, tables)[0]];
+
+      if (level == 0) {
+        selection = addSelection(selection, aggregation, table, column, aliases);
+      } else {
+        // Else we only need to add the aggregation string.
+        var subCondition = {};
+        subCondition.column = column;
+        subCondition.value = aggregation;
+        subCondition.source = aliases[table];
+        subCondition.sourceAlias = table;
+        subCondition.type = 'condition';
+
+        links = links.concat(subCondition);
+      }
+    } else {
+      if (level == 0){
+        print(columnObj)
         throw Error('Unknown column type: ' + ast.where.type);
       }
     }
-    setSelections(selection);
   }
+  setSelections(selection);
   
 
   // Find if there is a groupby clause.
@@ -44334,8 +44362,6 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
       setSelections(selection);
     }
   }
-
-  
 
   // Find if there is a with clause.
   if (ast.with != null){
@@ -44360,15 +44386,6 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
   }
 
   return [nodes, links];
-}
-
-function modifyNode(nodes, instance) {
-  nodes = nodes.filter(function(n) {
-    if (n.label != instance) {
-      return n;
-    }
-  });
-  return nodes;
 }
 
 
@@ -44556,10 +44573,10 @@ function getLinks(node, aliases, schema, tables) {
   var linksRight = [];
 
   if (node.left != null) {
-    linksLeft = getLinks(node.left, aliases, schema);
+    linksLeft = getLinks(node.left, aliases, schema, tables);
   }
   if (node.right != null) {
-    linksRight = getLinks(node.right, aliases, schema);
+    linksRight = getLinks(node.right, aliases, schema, tables);
   }
   return linksLeft.concat(linksRight);
 }
