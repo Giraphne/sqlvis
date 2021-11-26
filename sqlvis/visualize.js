@@ -43700,10 +43700,12 @@ THE SOFTWARE.
 function visualize(query, dbSchema, container, d3) {
   // Strip ; from the query as this will cause errors in the AST generation.
   var stripped_query = query.replace(/;/, '');
+  // Replace '' with "" to make the AST see the strings correctly
+  var quoted_query = stripped_query.replace(/'/g,'"')
 
   // Generate the AST.
   try{
-    var ast = parse_sql(stripped_query);
+    var ast = parse_sql(quoted_query);
   } catch (e) {
     container.text(e)
     return;
