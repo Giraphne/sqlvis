@@ -1,3 +1,5 @@
+Coming soon: SQLVis+, with error messages and error repairs for select syntax errors!
+
 # SQLvis
 
 A library to generate a *graph-based* visualization of SQL queries in **Jupyter Notebooks**. More information on Jupyter Notebooks is [here](https://jupyter.org).
