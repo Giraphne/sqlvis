@@ -20,10 +20,11 @@ def schema_from_conn(conn):
     return schema
 
 def visualize(s, schema):
+    # used d3.v5 previously
     display(Javascript("""
         require.config({
             paths: {
-                d3: 'https://d3js.org/d3.v5.min'
+                d3: 'https://d3js.org/d3.v4.min'
             }
         });
     """))

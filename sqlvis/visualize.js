@@ -43697,7 +43697,10 @@ THE SOFTWARE.
 
 
 
-function visualize(query, dbSchema, container, d3) {
+var levelsWithErrors = [];
+function visualize(query, schema, container, d3) {
+  originalSchema = schema;
+  currentSchema = schema;
   // Strip ; from the query as this will cause errors in the AST generation.
   var stripped_query = query.replace(/;/, '');
   // Replace '' with "" to make the AST see the strings correctly
@@ -43707,10 +43710,10 @@ function visualize(query, dbSchema, container, d3) {
   try{
     var ast = parse_sql(quoted_query);
   } catch (e) {
-    container.text(e)
-    return;
+    //container.text(e)
+    //return;
   }
-  
+
   console.log('AST:', ast);
 
   var svg = container
@@ -43722,8 +43725,18 @@ function visualize(query, dbSchema, container, d3) {
     .append('g')
     .attr('class', 'container');
 
+  // Analyze referencing/scoping
+  withClauses = [];
+  tempSchema = [];
+  levelsWithErrors = [];
+  extractAllowedRefs(svg, ast, {}, schema, 0, -1);
+  console.log("Augmented AST: ", ast);
+  analyzeReferences(svg, ast, {}, schema, 0, -1);
+  console.log("AST with errors: ", ast);
   // Generate the contents of the visualization.
-  var [nodes, links] = generateGraphTopLevel(svg, ast, {}, dbSchema, 0, -1);
+  var [nodes, links] = generateGraphTopLevel(svg, ast, {}, schema, 0, -1);
+  console.log("Generated nodes: ", nodes);
+  console.log("Generated links: ", links);
 
   // Sort out the links for links vs conditions.
   var cons = [];
@@ -43735,12 +43748,12 @@ function visualize(query, dbSchema, container, d3) {
       cons.push(links[link]);
     }
   }
-  setConditions(processConditions(cons));
+  setConditions(processConditions(cons, nodes));
   if (realLinks != []) {
     if (realLinks.length > 1) {
       var realLinks = mergeLinks(realLinks);
     }
-    drawGraph(nodes, realLinks, container, d3, dbSchema);
+    drawGraph(nodes, realLinks, container, d3, schema);
   }
 }
 
@@ -43776,6 +43789,10 @@ function mergeLinks(links) {
 
     for (var i in indexes) {
       newLink['label'] = newLink['label'].concat(links[indexes[i]].label);
+      if (links[indexes[i]].error) {
+        newLink.error = true;
+        newLink.errorInfo = links[indexes[i]].errorInfo;
+      }
       dropIndexes.push(indexes[i]);
     }
 
@@ -43792,10 +43809,10 @@ function mergeLinks(links) {
 /**
 * A function to remove most of the unneccessary data, changing it into a more easily processable object.
 *
-* @param cons     The conditions in an array of objects with many keys and values.
-* @returns result   An array of the shape [{table: {condition: value}}]
+* @param cons 		The conditions in an array of objects with many keys and values.
+* @returns result 	An array of the shape [{table: {condition: value}}]
 */
-function processConditions(cons) {
+function processConditions(cons, nodes) {
   var result = {};
 
   for (var con in cons) {
@@ -43806,12 +43823,23 @@ function processConditions(cons) {
 
     object[column] = value;
 
+    // Condition errors are propagated to nodes instead
+    if (cons[con].error && cons[con].errorInfo.type == 'table_ref_invalid_alias') {
+      for (var n of nodes) {
+        if (n.label == cons[con].source && n.alias == cons[con].sourceAlias) {
+          n.errorInfo = cons[con].errorInfo;
+          n.isHighlighted = true;
+          n.isExpanded = true;
+        }
+      }
+      object.errorInfo = cons[con].errorInfo;
+    }
+
     if (table in result) {
       result[table].push(object);
     } else {
       result[table] = [object];
     }
-
   }
 
   // Merge any objects where multiple conditions apply.
@@ -43827,6 +43855,11 @@ function processConditions(cons) {
       } else {
         newObj[key] = [value];
       }
+
+      // Propagate the error to the new object as well
+      if (result[table][i].errorInfo) {
+        newObj.errorInfo = result[table][i].errorInfo;
+      }
     }
 
     cleanResult[table] = newObj;
@@ -43836,8 +43869,9 @@ function processConditions(cons) {
 }
 
 
-function drawGraph(vertices, links, container, d3, dbSchema) {
+function drawGraph(vertices, links, container, d3, schema) {
   console.log('drawGraph', vertices, links);
+  var nodesToExpand = [];
 
   // Create a new directed graph
   var graph = new dagreD3.graphlib.Graph({
@@ -43853,10 +43887,21 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
       vertex.alias = vertex.label;
       vertexLabel = vertex.label;
     } else {
+      if (vertex.isHighlighted) {
+        vertexLabel = vertex.label + ' <b class=\'erroredAlias\'>' + vertex.alias + '</b>';
+      } else {
+        vertexLabel = vertex.label + ' <b class=\'alias\'>' + vertex.alias + '</b>';	
       vertexLabel = vertex.label + ' <b class=\'alias\'>' + vertex.alias + '</b>';
+        vertexLabel = vertex.label + ' <b class=\'alias\'>' + vertex.alias + '</b>';	
+      }
     }
 
-    graph.setNode(vertex.alias, {
+    var shouldExpand = false;
+    if (vertex.errorInfo && vertex.errorInfo.type == "ambiguous_column_ref") {
+      shouldExpand = true;
+    }
+
+    graph.setNode((vertex.id? vertex.id : vertex.alias), {
       alias: vertex.alias,
       parent: vertex.parent,
       labelType: 'html',
@@ -43867,8 +43912,13 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
       rx: vertex.rx != null ? vertex.rx : 70,
       ry: vertex.ry != null ? vertex.ry : 70,
       isExpanded: false,
-      class: vertex.class
+      class: vertex.isHighlighted ? 'erroredRect' : vertex.class,
+      errorInfo: vertex.errorInfo
     });
+
+    if (vertex.isExpanded || shouldExpand) {
+      nodesToExpand.push(vertex.id? vertex.id : vertex.alias);
+    }
   });
 
   var vertexlabels = vertices.map(function(v) {
@@ -43877,44 +43927,61 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
 
   // Index the node levels for subqueries.
   var levels = vertices.map(function(v) {
-    return v.level;
+  return v.level;
   });
   levels = [...new Set(levels)];
+  if (!levels.includes(0)) {
+    // This prevents graph rendering from crashing when only nested queries are present in the query
+    console.log("No nodes with level 0, still proceeding with creating level 0 manually.");
+    levels.push(0);
+  }
+  console.log("This graph's levels: ", levels);
   if (levels.length > 1) {
-    var colors = ['empty', '#B1A7EF', '#8777EF', '#5E47EF'];
+      var colors = ['empty', '#B1A7EF', '#8777EF', '#5E47EF'];
 
-    // Create node groups for each subquery
-    for (var i in levels) {
-      if (levels[i] != 0) {
-        if (levels[i].length > 1) {
-          var color = colors[parseInt(levels[i].slice(-1))];
-          var parentLevel = levels[i].slice(0, -2)
-          if (parentLevel in levels) {
-            var parentName
-            var childName
-            for (var j in vertices) {
-              if(vertices[j].level == parentLevel) {
-                parentName = vertices[j].parent
-              } else if (vertices[j].level == levels[i]) {
-                childName = vertices[j].parent
+      // Create node groups for each subquery
+      for (var i in levels) {
+        if (levels[i] != 0) {
+          if (levels[i].length > 1) {
+            var color = colors[parseInt(levels[i].slice(-1))];
+            var parentLevel = levels[i].slice(0, -2)
+            if (parentLevel in levels) {
+              var parentName
+              var childName
+              for (var j in vertices) {
+                if(vertices[j].level == parentLevel) {
+                  parentName = vertices[j].parent
+                } else if (vertices[j].level == levels[i]) {
+                  childName = vertices[j].parent
+                }
+              }
+              if (typeof parentName == 'string' && typeof childName == 'string') {
+                graph.setParent(parentName, childName)
               }
             }
-            if (typeof parentName == 'string' && typeof childName == 'string') {
-              graph.setParent(parentName, childName)
-            }
+          } else {
+            color = colors[levels[i]];
           }
-        } else {
-          color = colors[levels[i]];
-        }
-        //If this is an unnamed subquery, create a subquery container for it
+          //If this is an unnamed subquery, create a subquery container for it
+      var levelError = levelsWithErrors.find(l => l.level == levels[i]);
+      // If the levelError has a name associated to it, then it is not for an unnamed subquery
+      if (levelError && !levelError.name) {
         graph.setNode(levels[i].toString(), {
           label: '',
           clusterLabelPos: 'top',
-          style: 'fill: ' + color + '40; stroke-width: 0px; stroke: ' + color
+          style: 'fill: ' + color + '40; stroke-width: 1px; stroke: #FF0000',
+          errorInfo: levelError.errorInfo
+          });
+      } else {
+        graph.setNode(levels[i].toString(), {
+        label: '',
+        clusterLabelPos: 'top',
+        style: 'fill: ' + color + '40; stroke-width: 0px; stroke: ' + color
         });
-
       }
-    }
+        }
+      }
+
 
     for (var v in vertices) {
       // Check if vertex is part of a view.
@@ -43939,12 +44006,21 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
           graph.setParent(vertices[v].alias, vertices[v].parent + '-parent');
           graph.setParent(vertices[v].parent, vertices[v].parent + '-parent');
         } else {
-          graph.setNode(vertices[v].parent, {
-            label: vertices[v].parent,
-            clusterLabelPos: 'top',
-            style: 'fill: ' + color + '40; stroke-width: 0px; stroke: ' + color
-          });
-
+          var levelError = levelsWithErrors.find(l => l.name == vertices[v].parent);
+          if (levelError) {
+            graph.setNode(vertices[v].parent, {
+              label: vertices[v].parent,
+              clusterLabelPos: 'top',
+              style: 'fill: ' + color + '40; stroke-width: 1px; stroke: #FF0000',
+              errorInfo: levelError.errorInfo
+              });
+          } else {
+            graph.setNode(vertices[v].parent, {
+              label: vertices[v].parent,
+              clusterLabelPos: 'top',
+              style: 'fill: ' + color + '40; stroke-width: 0px; stroke: ' + color
+            });
+          }
           graph.setParent(vertices[v].alias, vertices[v].parent);
         }
 
@@ -43957,34 +44033,82 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
         }
         if (vertices[v].level != 0) {
           // Make each node belong to their subqueries
-          graph.setParent(vertices[v].alias, vertices[v].level);
+          graph.setParent(vertices[v].id? vertices[v].id : vertices[v].alias, vertices[v].level);
         }
       }
 
     }
   }
 
+  var errorDict = {};
+
   // Automatically generate edges
   links.forEach(function(link, i) {
-
+    var swapped = false;
     if(vertexlabels.indexOf(link.sourceAlias) < vertexlabels.indexOf(link.targetAlias)) {
       var source = link.sourceAlias;
       var target = link.targetAlias;
     } else {
       var source = link.targetAlias;
       var target = link.sourceAlias;
+      swapped = true;
     }
+    // Handle the cases where the left/right part of the link references an alias of the with clause
+    if (link.leftIsWithRef) {
+      if (swapped) {
+        target = link.leftWithTableName;
+      } else {
+        source = link.leftWithTableName;
+      }
+    }
+    if (link.rightIsWithRef) {
+      if (swapped) {
+        source = link.rightWithTableName;
+      } else {
+        target = link.rightWithTableName;
+      }
+    }
+
     var labelString = link['label'].join('<br />');
-    graph.setEdge(source, target,
-      {labelType: 'html',
-        label: labelString,
-        arrowhead: 'undirected',
-        labelpos: 'c'}, i);
+    if (link.error) {
+      errorDict[[source, target]] = link.errorInfo;
+      graph.setEdge(source, target,
+        {labelType: 'html',
+          label: labelString,
+          class: 'errorEdgePath',
+          arrowhead: 'undirected',
+          labelpos: 'c'}, i);
+      if (link.errorInfo.type == 'table_ref_invalid_column') {
+        // We want to expand the node of that table to clarify which attributes can be used
+        var iToHighlight = vertices.findIndex(v => v.alias == link.errorInfo.ref.table);
+        if (iToHighlight != -1) {
+          vertices[iToHighlight].isHighlighted = true;
+          if (source === link.errorInfo.ref.table) {
+            nodesToExpand.push(source);
+          } else {
+            nodesToExpand.push(target);
+          }
+        }
+      }
+    } else {
+      graph.setEdge(source, target,
+        {labelType: 'html',
+          label: labelString,
+          arrowhead: 'undirected',
+          labelpos: 'c'}, i);
+    }
   
   });
 
   console.log('Graph', graph);
-  
+
+
+
+  // Tooltip
+  var div = d3.select("body").append("div")	
+      .attr("class", "tooltip")				
+      .style("opacity", 0);
+
   var svg = container.select('svg');
   var inner = svg.select('g.container');
 
@@ -44000,10 +44124,44 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
 
   // Run the renderer. This is what draws the final graph.
   render(inner, graph);
+  
+  inner.selectAll("g.edgeLabel")
+    .on("mouseover", function(d) {
+      var errorValue = errorDict[[d.v, d.w]];
+      if (errorValue) {
+        div.transition()		
+          .duration(200)		
+          .style("opacity", .9);		
+        div	.html("<b>" + errorValue.header + "</b> <br/>" + errorValue.message)	
+          .style("left", (d3.event.pageX) + "px")		
+          .style("top", (d3.event.pageY - 28) + "px");
+      }
+      })					
+    .on("mouseout", function(d) {		
+      div.transition()		
+        .duration(500)		
+        .style("opacity", 0);	
+    });
 
   // Center the graph
   var initialScale = 0.75;
-  //centerGraph(svg, zoom, graph, initialScale, d3);
+  centerGraph(svg, zoom, graph, initialScale, d3);
+
+  // Remove duplicates to prevent multiple tries to expand one node
+  nodesToExpand = [...new Set(nodesToExpand)];
+  // Expand nodes that are related to errors
+  console.log("nodes to expand: ", nodesToExpand);
+  for (var n in nodesToExpand) {
+    const oldTransform = inner.attr('transform');
+    var node = nodesToExpand[n];
+    var graphNode = graph.node(node);
+    graphNode.toHighlight = true;
+    console.log("Trying to expand node: ", node);		
+    expand(graphNode, node, d3, false);
+    inner.attr('transform', null);
+    render(inner, graph);
+    inner.attr('transform', oldTransform);
+  }
 
   svg.selectAll('g.node')
     .on('click', function(id) {
@@ -44013,7 +44171,7 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
 
       var clickedNode = graph.node(id);
       console.log(clickedNode);
-
+      console.log("Clicked on node with id: ", id);
       if (clickedNode.isExpanded) {
 
         collapse(clickedNode, id);
@@ -44024,15 +44182,47 @@ function drawGraph(vertices, links, container, d3, dbSchema) {
         inner.attr('transform', oldTransform);
 
       } else {
-        expand(clickedNode, id, d3, dbSchema)
+        expand(clickedNode, id, d3);
         inner.attr('transform', null);
         render(inner, graph);
         //Reset the old transformation to make sure everything is centered correctly
         inner.attr('transform', oldTransform);
-
+        //highlightNodes(graph, svg);
       }
-
-
+    })
+    .on("mouseover", function(d) {
+      var node = graph.node(d);
+      if (node.errorInfo) {
+        div.transition()		
+          .duration(200)		
+          .style("opacity", .9);		
+        div	.html("<b>" + node.errorInfo.header + "</b> <br/>" + node.errorInfo.message)	
+          .style("left", (d3.event.pageX) + "px")		
+          .style("top", (d3.event.pageY - 28) + "px");
+      }
+      })					
+    .on("mouseout", function(d) {		
+      div.transition()		
+        .duration(500)		
+        .style("opacity", 0);	
+    });
+  
+  svg.selectAll('g.cluster')
+    .on("mouseover", function(d) {
+      var node = graph.node(d);
+      if (node.errorInfo) {
+        div.transition()		
+          .duration(200)		
+          .style("opacity", .9);		
+        div	.html("<b>" + node.errorInfo.header + "</b> <br/>" + node.errorInfo.message)	
+          .style("left", (d3.event.pageX) + "px")		
+          .style("top", (d3.event.pageY - 28) + "px");
+      }
+      })					
+    .on("mouseout", function(d) {		
+      div.transition()		
+        .duration(500)		
+        .style("opacity", 0);	
     });
 }
 
@@ -44057,11 +44247,14 @@ function collapse(node, id) {
   node.isExpanded = false;
 }
 
-function expand(node, id, d3, dbSchema) {
+function expand(node, id, d3, showAlertsOnFail = true) {
+  var dbSchema = getSchemaWithTempValues();
   var clickedTable = node.label.split(' ')[0];
 
   if(dbSchema[clickedTable] == undefined) {
-    alert('This table name does not exist in the schema. Check if you have mispelled it. Otherwise, is probably a view and cannot be expanded at this time.');
+    if (showAlertsOnFail) {
+      alert('This node is probably a view and cannot be expanded at this time.');
+    }
     return;
   } else {
     // Make the node a rectangle to reflect expansion.
@@ -44090,10 +44283,21 @@ function expand(node, id, d3, dbSchema) {
       .attr('class', function(d) {
         var classes = [];
         if (cons[label] && cons[label][d]) {
-          classes.push('condition');
+          if (cons[label].errorInfo) {
+            /* Right now only the selected column is highlighted in red, to highlight condition
+                we would have to add erroredCondition class, both to the .css file as it is not yet defined and here
+            */
+            classes.push('erroredSelection');
+          } else {
+            classes.push('condition');
+          }
         }
         if (selects[label] && selects[label][d]) {
-          classes.push('selection');
+          if (selects[label][d].errorInfo) {
+            classes.push('erroredSelection');
+          } else {
+            classes.push('selection');
+          }
         }
         return classes.join(' ');
       });
@@ -44135,11 +44339,23 @@ function expand(node, id, d3, dbSchema) {
     document.body.removeChild(table);
 
     // Make sure the node is big enough to hold the table
-    node.width = 1.1*tableWidth;
-    node.height = 1.5*tableHeight;
+    node.width = tableWidth;
+    node.height = 1.1*tableHeight;
     node.label += table.outerHTML;
   }
-};
+}
+
+function highlightNodes(graph, svg) {
+  // Highlight the node if needed
+  svg.selectAll('g.node')
+    .filter(id =>
+      {
+        var node = graph.node(id);
+        return node.toHighlight ? true : false;
+      })
+    .select("rect")
+    .style("stroke", "rgb(239, 52, 52)");
+}
 
 function addSelection(selection, aggregation, table, column, aliases) {
   // Check if there is an alias for this table
@@ -44188,17 +44404,646 @@ function addJoinLink(tableObject, aliases) {
   return subLink;
 }
 
+function getRefSource(unverifiedRef, refs) {
+  for (var i in refs) {
+    var ref = refs[i];
+
+  }
+}
+
+function hasAWithClauseWithName(name, refs) {
+  for (var i in refs) {
+    var ref = refs[i];
+    if (ref.type == 'withClause' && ref.tableName == name) {
+      return ref;
+    }
+  }
+  return null;
+}
+
+function findOtherWithRefs(ast, allWithStmts) {
+  var otherWithRefs = [];
+  for (var index in ast.from) {
+    var tableObject = ast.from[index];
+    if (tableObject) {
+      if (tableObject.expr) {
+        if (tableObject.expr.type == 'select') {
+          var refs = findOtherWithRefs(tableObject.expr);
+          otherWithRefs.push(...refs);
+        }
+      } else if (allWithStmts.some(w => w == tableObject.table)) {
+        otherWithRefs.push(tableObject.table);
+      }
+    }
+  }
+
+  return otherWithRefs;
+}
+
+function kahnsAlgorithm(S, refDictionary) {
+  if (S.length == 0) {
+    console.warn("Cannot start Khan's algorithm, there is no node without incoming edges!");
+    return [];
+  }
+
+  var L = [];
+
+  while (S.length > 0) {
+    var poppedIndex = S.length - 1;
+    var n = S.pop();
+    L.push(n);
+
+    for (var key in refDictionary) {
+      if (refDictionary[key].some(e => e == n)) {
+        refDictionary[key] = refDictionary[key].filter(e => e != n);
+      }
+      if (refDictionary[key].length == 0 && !L.some(e => e == key)) {
+        S.push(key);		
+      }
+    }
+  }
+
+  for (var key in refDictionary) {
+    if (refDictionary[key].length != 0) {
+      console.warn("Kahn's algorithm found at least one cycle, problematic node: ", key);
+    }
+  }
+
+  return L;
+}
+
+var withClauses = [];
+
+function extractAllowedRefs(element, ast, aliases, schema, level, parent, isAWithClause = false, parentsRefs = []) {
+  ast.refs = [...parentsRefs]; // unpacked to not modify the parents references array
+  ast.selectedRefs = [];
+
+  // Extract reference from the with clause
+  if (ast.with) {
+
+    // First we extract the names of all with stmts
+    var allWithStmts = [];
+    for (var i in ast.with) {
+      allWithStmts.push(ast.with[i].name);
+    }
+
+    var refDictionary = {};
+    var S = [];
+    // Then for each with stmt we determine which other stmts it refers to
+    for (var i in ast.with) {
+      var currentWith = ast.with[i].stmt;
+      var otherWithRefs = findOtherWithRefs(currentWith, allWithStmts);
+      refDictionary[ast.with[i].name] = otherWithRefs;
+      if (otherWithRefs.length == 0) {
+        S.push(ast.with[i].name);
+      }
+    }
+
+    var sortedWithNames = kahnsAlgorithm(S, refDictionary);
+
+    for (var withName of sortedWithNames) {
+      var i = ast.with.findIndex(e => e.name == withName);
+      var currentWith = ast.with[i].stmt;
+      var extractedRefs = extractAllowedRefs(element, currentWith, aliases, schema, level + 1, ast, true, parentsRefs); 
+      var ref = {type: 'withClause', tableName: ast.with[i].name, attributes: extractedRefs, ast_obj: ast.with[i]};
+      ast.refs.push(ref);
+      withClauses.push(ref);
+    }
+  }
+
+  for (var index in ast.from) {
+    var tableObject = ast.from[index];
+    if (tableObject) {
+      if (tableObject.expr) {
+        if (tableObject.expr.type == 'select') {
+          var refs = extractAllowedRefs(element, tableObject.expr, aliases, schema, level + 1, ast, false, parentsRefs);
+          ast.refs.push({type: 'nestedQuery', ast_obj: tableObject.expr, tableName: tableObject.as, attributes: [...refs]});
+        } else {
+          console.warn("Unhandled expression type: ", ast.expr.type, " in the FROM statement. AST: ", ast);
+        }
+      // Check if table is in the schema
+      } else if (schema[tableObject.table]) {
+        ast.refs.push({type: 'table', ast_obj: tableObject, tableName: tableObject.as ? tableObject.as : tableObject.table, originalName: tableObject.table, attributes: [...schema[tableObject.table]]});
+      } else if (hasAWithClauseWithName(tableObject.table, withClauses) != null) {
+        // This references the original WITH ref in case something changes in there later on, so we don't have to propagate the changes
+        ast.refs.push({type: 'importedWithClause', tableName: tableObject.as ? tableObject.as : tableObject.table, withRef: hasAWithClauseWithName(tableObject.table, withClauses)});
+      } else {
+        console.warn("Unresolved reference in AST: ", ast, " reference to the table ", tableObject.table, " in the FROM clause");
+        var unresolvedRef = {type: 'unresolvedTableReference', tableName: tableObject.table};
+        ast.refs.push(unresolvedRef);
+      }
+    }
+  }
+
+  for (var i in ast.columns) {
+    var selectNode = ast.columns[i];
+    var selectExpr = selectNode.expr;
+    if (selectExpr == null && selectNode == "*") {
+      // Just extract refs from each table in the FROM clause
+      for (var i in ast.refs) {
+        var ref = ast.refs[i];
+        if (ref.type == "importedWithClause") {
+          ast.selectedRefs.push(...ref.withRef.attributes);
+        } else if (ref.type == "nestedQuery" || ref.type == "table") {
+          ast.selectedRefs.push(...ref.attributes);
+        } else if (ref.type == "withClause") {
+          // With clause references are not selected, unless they are of type importedWithClause
+        } else {
+          console.warn("Unhandled reference type, trying to extract attributes from reference ", ref, " with type ", ref.type);
+          }
+      }
+    } else if (selectExpr.type == "column_ref") {
+      ast.selectedRefs.push(selectNode.as ? selectNode.as : selectExpr.column);
+    } else if (selectExpr.type == "aggr_func") {
+      var aggrColumn = selectExpr.args.expr;
+      if (aggrColumn.type == "column_ref") {
+        ast.selectedRefs.push(aggrColumn.as ? aggrColumn.as : aggrColumn.column);
+      } else {
+        console.warn("Unhandled type: ", selectExpr.type, " in analyzeReferences nested in an aggr_func ", selectExpr.name);	
+      }
+    } else if (selectExpr.type == "number") {
+      ast.selectedRefs.push(selectNode.as);
+    } else {
+      console.warn("Unhandled type: ", selectExpr.type, " in analyzeReferences function.");
+    }
+  }
+
+  // Walk the WHERE part of the tree
+  if (ast.where) {
+    extractWhereStmt(element, ast.where, aliases, schema, level, ast.refs);
+  }
+
+  return ast.selectedRefs;
+}
+
+function extractWhereStmt(element, ast, aliases, schema, level, parentsRefs) {
+  if (!ast || ast.type == "column_ref" || ast.type == "number" || ast.type == "string") {
+    return;
+  } else if (ast.type == "binary_expr") {
+    extractWhereStmt(element, ast.left, aliases, schema, level, parentsRefs);
+    extractWhereStmt(element, ast.right, aliases, schema, level, parentsRefs);
+  } else if (ast.type == "unary_expr") {
+    extractAllowedRefs(element, ast.expr, aliases, schema, level, parent, false, parentsRefs);
+  } else if (ast.type  == "select") {
+    extractAllowedRefs(element, ast, aliases, schema, level + 1, parent, false, parentsRefs);
+  } else if (ast.type == "expr_list") {
+    for (var expr of ast.value) {
+      if (expr.type == "select") {
+        extractAllowedRefs(element, expr, aliases, schema, level + 1, parent, false, parentsRefs);
+      } else {
+        console.warn("Unhandled type: ", expr.type, " in extractWhereStmt function. Found unwinding expr_list: ", ast);
+      }
+    }
+  } else {
+    console.warn("Unhandled type: ", ast.type, " in extractWhereStmt function. AST: ", ast);
+  }
+}
+
+function analyzeReferences(element, ast, aliases, schema, level, parent) {
+  if (ast.with) {
+    for (var i in ast.with) {
+      var withStmt = ast.with[i].stmt;
+      analyzeReferences(element, withStmt, aliases, schema, level + 1, ast);
+    }
+  }
+
+  for (var index in ast.from) {
+    var tableObject = ast.from[index];
+    if (tableObject) {
+      if (tableObject.expr) {
+        if (tableObject.expr.type == 'select') {
+          analyzeReferences(element, tableObject.expr, aliases, schema, level + 1, ast);
+        } else {
+          console.warn("Unhandled expression type: ", ast.expr.type, " in the FROM statement. AST: ", ast);
+        }
+      } else if (schema[tableObject.table]) {
+        // Reference to a table is valid, as it is a part of the schema
+      } else if (withClauses.some(ref => ref.tableName == tableObject.table)) {
+        // This references an existing with clause, so it is valid
+      } else {
+        var response = isValid(tableObject, true, ast.refs, ast, schema);
+        if (response.result || response.type == 'unhandled_error_type') {
+        } else {
+          tableObject.errorInfo = response;
+        }
+      }
+    }
+  }
+  for (var i in ast.columns) {
+    var selectNode = ast.columns[i];
+    var selectExpr = selectNode.expr;
+    if (selectExpr == null) {
+      // A "SELECT *" statement, so no references to validate here
+    } else if (selectExpr.type == "column_ref") {
+      var response = isValid(selectExpr, false, ast.refs, ast, schema);
+      if (response.result || response.type == 'unhandled_error_type') {
+      } else {
+        if (response.type == "ambiguous_column_ref") {
+          /* We have to propagate the error to the tables which have this column
+              In case the errors are in nested queries (with clauses or subqueries)
+              We'll just mark the whole level with an error
+          */
+          for (var i in response.validRefs) {
+            var violatingRef = response.validRefs[i];
+            if (violatingRef.type == "table" || violatingRef.type == "nestedQuery") {
+              violatingRef.ast_obj.errorInfo = response;
+            } else if (violatingRef.type == "importedWithClause") {
+              violatingRef.withRef.ast_obj.errorInfo = response;
+            }
+          }
+        }
+        selectExpr.errorInfo = response;
+      }
+    } else if (selectExpr.type == "aggr_func") {
+      var aggrColumn = selectExpr.args.expr;
+      if (aggrColumn.type == "column_ref") {
+        var response = isValid(aggrColumn, false, ast.refs, ast, schema);
+        if (response.result) {
+        } else {
+          if (response.type == "ambiguous_column_ref") {
+            for (var i in response.validRefs) {
+              var violatingRef = response.validRefs[i];
+              if (violatingRef.type == "table" || violatingRef.type == "nestedQuery") {
+                violatingRef.ast_obj.errorInfo = response;
+              } else if (violatingRef.type == "importedWithClause") {
+                violatingRef.withRef.ast_obj.errorInfo = response;
+              }
+            }
+          }
+          aggrColumn.errorInfo = response;
+        }
+      } else {
+        console.warn("Unhandled type: ", selectExpr.type, " in the select stmt nested in an aggr_func ", selectExpr.name);	
+      }
+    } else {
+      console.warn("Unhandled type: ", selectExpr.type, " in the select stmt.");
+    }
+  }
+  if (ast.where) {
+    var thisLevelRefs = analyzeConditionalReferences(element, ast.where, aliases, schema, level, ast);
+    for (var i in thisLevelRefs) {
+      var refToCheck = thisLevelRefs[i];
+      var response = isValid(refToCheck, false, ast.refs, ast, schema);
+      if (response.result || response.type == 'unhandled_error_type') {
+      } else {
+        refToCheck.errorInfo = response;
+      }
+    }
+  }
+  if (ast.groupby) {
+    for (var i in ast.groupby) {
+      var groupByExpr = ast.groupby[i];
+      if (groupByExpr.type == "column_ref") {
+        var response = isValid(groupByExpr, false, ast.refs, ast, schema);
+        if (response.result || response.type == 'unhandled_error_type') {
+        } else {
+          if (response.type == "ambiguous_column_ref") {
+            for (var i in response.validRefs) {
+              var violatingRef = response.validRefs[i];
+              if (violatingRef.type == "table" || violatingRef.type == "nestedQuery") {
+                violatingRef.ast_obj.errorInfo = response;
+              } else if (violatingRef.type == "importedWithClause") {
+                violatingRef.withRef.ast_obj.errorInfo = response;
+              }
+            }
+          }
+          groupByExpr.errorInfo = response;
+        }
+      } else {
+        console.warn("Unhandled type: ", selectExpr.type, " in the group by stmt.");
+      }
+    }
+  }
+}
+
+function analyzeConditionalReferences(element, ast, aliases, schema, level, parent, allowAggregates = false) {
+  var thisLevelRefs = [];
+  if (!ast || ast.type == "number" || ast.type == "string") {
+    return [];
+  } else if (ast.type == "column_ref") {
+    thisLevelRefs.push(ast)
+    return thisLevelRefs;
+  } else if (ast.type == "binary_expr") {
+    var leftRefs = analyzeConditionalReferences(element, ast.left, aliases, schema, level, parent, allowAggregates);
+    var rightRefs = analyzeConditionalReferences(element, ast.right, aliases, schema, level, parent, allowAggregates);
+    return leftRefs.concat(rightRefs);
+  } else if (ast.type == "unary_expr") {
+    return analyzeConditionalReferences(element, ast.expr, aliases, schema, level, parent, allowAggregates);
+  } else if (ast.type  == "select") {
+    analyzeReferences(element, ast, aliases, schema, level + 1, parent);
+    return [];
+  } else if (ast.type == "expr_list") {
+    for (var expr of ast.value) {
+      if (expr.type == "select") {
+        analyzeReferences(element, expr, aliases, schema, level + 1, parent);
+      } else {
+        console.warn("Unhandled type: ", expr.type, " in analyzeConditionalReferences function. Found unwinding expr_list: ", ast);
+      }
+    }
+    return [];
+  } else if (allowAggregates && ast.type == "aggr_func") {
+    return analyzeConditionalReferences(element, ast.args.expr, aliases, schema, level, parent, allowAggregates);
+  } else {
+    console.warn("Unhandled type: ", ast.type, " in analyzeConditionalReferences function. AST: ", ast);
+    return [];
+  }
+}
+
+function isValid(ref, isATableRef, allowedRefs, ast, schema) {
+  if (isATableRef) {
+    if (schema[ref.table] || withClauses.some(ref => ref.tableName == ref.table)) {
+      // Reference to a table is valid, as it is a part of the schema or is a reference to WITH clause
+      return { result: true };
+    } else {
+      return { result: false, ...findReason(ref, isATableRef, allowedRefs, ast, schema) };
+    } 
+  } else {
+    // must be a column ref
+    var numOfValidPossibilities = 0;
+    var hasRepeatedNames = false;
+    var validTables = [];
+    var validRefs = [];
+    for (var i in allowedRefs) {
+      var allowedRef = allowedRefs[i];
+      if (allowedRef.type == "unresolvedTableReference" || allowedRef.type == "withClause") {
+        continue;
+      }
+      // If the reference does not mention table explicitly or it does and it matches
+      if (!ref.table || ref.table == allowedRef.tableName) {
+        // Get the table attributes
+        var allowedAttributes = allowedRef.type == "importedWithClause" ? allowedRef.withRef.attributes : allowedRef.attributes;
+        // And find out whether the table contains current reference
+        if (allowedAttributes.some(a => a == ref.column)) {
+          if (validTables.includes(allowedRef.tableName)) {
+            // It does contain the reference, and we already have that table recorded
+            hasRepeatedNames = true;
+          } else {
+            // It does contain the reference, and we've not seen this table for this ref before
+            validTables.push(allowedRef.tableName);
+            validRefs.push(allowedRef);
+            numOfValidPossibilities++;
+          }
+        }
+      }
+    }
+
+    if (numOfValidPossibilities == 0) {
+      // Cannot find this column reference in any table
+      return { result: false, ...findReason(ref, isATableRef, allowedRefs, ast, schema) };
+    } else if (numOfValidPossibilities == 1) {
+      if (hasRepeatedNames) {
+        // Multiple tables with the same name/alias have that ref in this scope
+        var header = "Ambiguous reference to column " + underline(ref.column);
+        var msg = "You have more than one table with the same alias: " + underlineArr(validTables).join(', ') +
+              ". Give the tables in the same scope unique aliases.";
+        return { result: false, type: "ambiguous_column_ref_same_aliases", message: msg, header: header, ref: ref, validTables: validTables };	
+      } else {
+        // Found exactly one valid table for this reference, so it must be correct
+        return { result: true };
+      }
+    } else {
+      // numOfValidPossibilities > 1, so this is an ambiguous column reference
+      var header = "Ambiguous reference to column " + underline(ref.column);
+      var msg = "Specify the name of the table. In this scope the following tables have the column " + underline(ref.column) + ": " + underlineArr(validTables).join(', ');
+      return { result: false, type: "ambiguous_column_ref", message: msg, header: header, ref: ref, validRefs: validRefs, validTables: validTables };
+    }
+  }
+}
+
+var similarityThreshold = 2;
+function findReason(ref, isATableRef, allowedRefs, ast, schema) {
+  var reasons = [];
+  var header;
+  var msg;
+  if (isATableRef) {
+    // - Maybe it is a misspelling, use string similarity to find out
+    var namesInScope = []; // we want to have all valid schema names + with clause names
+    for (var i in schema) {
+      namesInScope.push(i); // the index for schema is the name of the table
+    }
+    for (var i in withClauses) {
+      var withRef = withClauses[i];
+      namesInScope.push(withRef.tableName);
+    }
+    var similarNames = [];
+    for (var i in namesInScope) {
+      var allowedRef = namesInScope[i];
+      var levensteinDistance = levenshtein(ref.table, allowedRef);	
+      if (levensteinDistance <= similarityThreshold) {
+        similarNames.push(allowedRef);
+      }
+    }
+    // remove duplicates if there are any
+    similarNames = [...new Set(similarNames)];
+
+    header = "Table " + underline(ref.table) + " is not defined";
+    if (similarNames.length == 0) {
+      msg = "Check the spelling and make sure that " + underline(ref.table) + " exists in the scope.";
+    } else {
+      msg = "Did you mean: " + underlineArr(similarNames).join(' or ') + "?";
+    }
+    reasons.push({ type: "invalid_table_ref", message: msg, header: header, ref: ref });
+  } else {
+    // Maybe it is supposed to be a reference to a WITH clause
+    for (var i in withClauses) {
+      var withRef = withClauses[i];
+      if (ref.table && ref.table == withRef.tableName) {
+        if (withRef.attributes.some(a => a == ref.column)) {
+          header = "Missing table in the FROM clause";
+          msg = "Referencing WITH clause attribute " + underline(ref.table) + "." + underline(ref.column) +
+            " without listing " + underline(ref.table) + " in the FROM clause."
+          reasons.push({ type: "with_ref_valid_column", message: msg, header: header, ref: ref });
+        } else {
+          // Check if this WITH clause is actually imported in this scope
+          var withCorrectlyImported = allowedRefs.find(r => r.type == "importedWithClause" && r.name == r.tableName)? true : false;
+
+          // Spelling check for the attribute name
+          var similarNames = [];
+          for (var i in withRef.attributes) {
+            var allowedRef = withRef.attributes[i];
+            var levensteinDistance = levenshtein(ref.column, allowedRef);
+            console.log("lvst dst to ", allowedRef, " is ", levensteinDistance);
+            if (levensteinDistance <= similarityThreshold) {
+              similarNames.push(allowedRef);
+            }
+          }
+          if (withCorrectlyImported) {
+            header = "WITH attribute is not defined";
+            if (similarNames.length == 0) {
+              msg = "Referencing attribute " + underline(ref.table) + "." + underline(ref.column) + " which is not defined in " +
+                "the WITH clause " + underline(withRef.tableName) + ".";
+            } else {
+              msg = "Referencing attribute " + underline(ref.table) + "." + underline(ref.column) + " which is not defined. Did you mean: " + underlineArr(similarNames).join(' or ') + "?";
+            }
+            reasons.push({ type: "with_ref_invalid_column", message: msg, header: header, ref: ref });
+          } else {
+            header = "Incorrect table & attribute reference";
+            if (similarNames.length == 0) {
+              msg = "List the WITH clause " + underline(ref.table) + " in the FROM clause and check the attribute " + underline(ref.column) + " as it is undefined for that WITH clause.";
+            } else {
+              msg = "List the WITH clause " + underline(ref.table) + " in the FROM clause and check the attribute " + underline(ref.column) + " as it is undefined for that WITH clause. Did you mean: " + underlineArr(similarNames).join(' or ') + "?";
+            }
+            reasons.push({ type: "with_ref_invalid_column", message: msg, header: header, ref: ref });
+          }
+        }
+      }
+    }
+    
+    // Maybe it's a reference to a table which does not have that column
+    if (ref.table) {
+      var tableExists = false;
+      var tableIsUnresolved = false; // errored before, probably during FROM clause analysis
+      for (var i in allowedRefs) {
+        var allowedRef = allowedRefs[i];
+        if (allowedRef.type == "unresolvedTableReference") {
+          tableIsUnresolved = true;
+        } else if (allowedRef.type == "withClause") {
+          continue;
+        }
+        if (ref.table == allowedRef.tableName) {
+          var allowedAttributes = allowedRef.type == "importedWithClause" ? allowedRef.withRef.attributes : allowedRef.attributes;
+          tableExists = true;
+          if (!allowedAttributes.some(a => a == ref.column)) {
+            // Check for misspellings
+            var similarNames = [];
+            allowedAttributes.forEach(a => {
+              var levensteinDistance = levenshtein(ref.column, a);
+              if (levensteinDistance <= similarityThreshold) {
+                similarNames.push(a);
+              }
+            })
+
+            if (similarNames.length > 0) {
+              header = "Attribute " + underline(ref.table + "." + ref.column) +  " is not defined";
+              msg = "Did you mean: " + underlineArr(similarNames).join(' or ') + "?";
+              reasons.push({ type: "table_ref_invalid_column", message: msg, header: header, ref: ref });
+            } else {
+              header = "Table does not have such attribute";
+              msg = "Referencing " + underline(ref.table) + "." + underline(ref.column) +
+                " while " + underline(ref.table) + " does not have attribute " + underline(ref.column) + ".";
+              reasons.push({ type: "table_ref_invalid_column", message: msg, header: header, ref: ref });
+            }
+          }
+        } else if (allowedRef.originalName && ref.table == allowedRef.originalName) {
+          var allowedAttributes = allowedRef.type == "importedWithClause" ? allowedRef.withRef.attributes : allowedRef.attributes;
+          tableExists = true;
+          if (allowedAttributes.some(a => a == ref.column)) {
+            header = "Incorrect name of an aliased table";
+            msg = "Referencing " + underline(ref.table + "." + ref.column) +
+              " while " + underline(ref.table) + " is aliased by " + underline(allowedRef.tableName) + " in this scope."
+              + " Use " + underline(allowedRef.tableName + "." + ref.column) + " instead.";
+            reasons.push({ type: "table_ref_invalid_alias", message: msg, header: header, ref: ref });
+          } else {
+            header = "Wrong table name and attribute";
+            msg = "Table " + underline(ref.table) + " while " + underline(ref.table) + " is aliased by " + underline(allowedRef.tableName) + " in this scope and"
+              + " attribute " + underline(ref.column) + " not being part of that table.";
+            reasons.push({ type: "table_ref_invalid_alias", message: msg, header: header, ref: ref });
+          }
+        }
+      }
+
+      // Maybe it's a reference to a table that does not exist (or is misspelled)
+      // We ignore unresolved tables since the root error is probably in the FROM clause and is indicated in another error msg
+      if (!tableExists && !tableIsUnresolved) {
+        // First find all valid table names in this scope (also WITH clauses)
+        // Compare them to find any misspellings
+        var namesInScope = [];
+        for (var allowedRef of allowedRefs) {
+          if (allowedRef.type == "unresolvedTableReference" || allowedRef.type == "withClause") {
+            continue;
+          }
+          namesInScope.push(allowedRef.tableName);
+        }
+
+        var similarNames = [];
+        namesInScope.forEach(a => {
+          var levensteinDistance = levenshtein(ref.table, a);
+          if (levensteinDistance <= similarityThreshold) {
+            similarNames.push(a);
+          }
+        });
+
+        if (similarNames.length > 0) {
+          header = "Table " + underline(ref.table) + " does not exist in this scope";
+          msg = "You referenced " + underline(ref.table) + "." + underline(ref.column) + ". Did you mean one of these valid tables with a similar name: " + underlineArr(similarNames).join(' or ') + "?";
+          reasons.push({ type: "invalid_table_ref", message: msg, header: header, ref: ref });
+        } else {
+          header = "Table " + underline(ref.table) + " does not exist";
+          msg = "You referenced " + underline(ref.table + "." + ref.column) + ". Check the spelling and make sure that " + underline(ref.table) + " exists in the scope.";
+          reasons.push({ type: "invalid_table_ref", message: msg, header: header, ref: ref });
+        }
+      }
+    } else {
+      // The reference error for an attribute where no table is specified
+
+      // Find misspellings using all of the available column names
+      var namesInScope = [];
+      for (var allowedRef of allowedRefs) {
+        if (allowedRef.type == "unresolvedTableReference" || allowedRef.type == "withClause") {
+          continue;
+        }
+        for (var attr of allowedRef.attributes) {
+          var attrObj = {};
+          attrObj.name = attr;
+          attrObj.tableName = allowedRef.tableName;
+          namesInScope.push(attrObj);
+        }
+      }
+
+      var similarNames = [];
+      namesInScope.forEach(a => {
+        // Compare column names only
+        var levensteinDistance = levenshtein(ref.column, a.name);
+        if (levensteinDistance <= similarityThreshold) {
+          similarNames.push(a);
+        }
+      });
+
+      // Suggested names are in the format tableAlias.columnName or fullTableName.columnName
+      var suggestedNames = similarNames.map(a => a.tableName + "." + a.name);
+
+      if (similarNames.length > 0) {
+        header = "Attribute " + underline(ref.column) + " does not exist";
+        msg = "You referenced the attribute " + underline(ref.column) + ". Did you mean: " + underlineArr(suggestedNames).join(' or ') + "?";
+        reasons.push({ type: "invalid_table_ref", message: msg, header: header, ref: ref });
+      } else {
+        header = "Attribute " + underline(ref.column) + " does not exist";
+        msg = "You referenced the attribute " + underline(ref.column) + ". Check the spelling and make sure that " + underline(ref.column) + " exists in the scope.";
+        reasons.push({ type: "invalid_table_ref", message: msg, header: header, ref: ref });
+      }
+    }
+  }
+
+  if (reasons.length == 1) {
+    return reasons[0];
+  } else if (reasons.length > 1) {
+    console.warn("Unhandled case: multiple reasons for a reference error. Only the first reason is used. Ref: ", ref, ", reasons ", reasons);
+    return reasons[0];
+  }
+
+  console.warn("Could not find a reason for a reference error, ref: ", ref, ", isATableRef: ", isATableRef, ", allowedRefs: ", allowedRefs, ", ast: ", ast);
+  return { type: "unhandled_error_type" }
+}
+
+function underline(aString) {
+  return "<ins>" + aString + "</ins>";
+}
+
+function underlineArr(arrayOfStrings) {
+  return arrayOfStrings.map(a => "<ins>" + a + "</ins>");
+}
+
 /**
 * Generates all the elements for the drawing, as well as drawing all the nodes and rectangles.
 * This fuction is called recursively to travel through the AST nested tree.
 *
-* @param element    The visualization element to draw on.
-* @param simulation   The simulation object that calculates the forces.
-* @param ast      The Abstract Syntax Tree of the current query.
-* @param aliases    An object that links table aliases to their full table name.
-* @param schema     The database schema.
-* @param level      The current level of recursion within the ast.
-* @returns        A set of nodes and links.
+* @param element 		The visualization element to draw on.
+* @param simulation 	The simulation object that calculates the forces.
+* @param ast 			The Abstract Syntax Tree of the current query.
+* @param aliases 		An object that links table aliases to their full table name.
+* @param schema 		The database schema.
+* @param level 			The current level of recursion within the ast.
+* @returns				A set of nodes and links.
 */
 function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
   var nodes = [];
@@ -44221,18 +45066,23 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
       'label': tableObject.table || tableObject.as,
       'alias': alias,
       'width': 70,
-      'height': 70
+      'height': 70,
+      'isHighlighted': tableObject.errorInfo? true : false,
+      'errorInfo': tableObject.errorInfo
     });
 
     if(tableObject.expr != null) {
       nodes = modifyNode(nodes, tableObject.as);
       var [subNodes, subLinks] = generateGraphTopLevel(element, tableObject.expr, aliases, schema, level+1, tableObject.as);
+      if (tableObject.expr.errorInfo) {
+        // The subquery has an error, so we mark the level as erroneous to highlight it
+        levelsWithErrors.push({ name: tableObject.as, level: level+1, errorInfo: tableObject.expr.errorInfo });
+      }
 
       nodes = nodes.concat(subNodes);
       links = links.concat(subLinks);
     }
 
-    console.log(tableObject);
     if(tableObject.join != null) {
       var subLink = addJoinLink(tableObject, aliases);
       links = links.concat(subLink);
@@ -44284,8 +45134,60 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
 
       if (table in selection) {
         selection[table][column] = [''];
+    if (columnObj.errorInfo) {
+      var actualNode = nodes.find(n => n.label == columnObj.table || n.alias == columnObj.table);
+      if (actualNode) {
+        actualNode.errorInfo = columnObj.errorInfo;
+        actualNode.isHighlighted = true;
+        actualNode.isExpanded = true;
+      }
+    }
       } else {
         selection[table] = {[column]: ['']};
+    // Maybe selection also contains an error
+    if (columnObj.errorInfo && columnObj.errorInfo.type == "invalid_table_ref") {
+      // Create a missing table reference node
+      var id = (columnObj.table || columnObj.as) + columnObj.errorInfo.type;
+      nodes.push({
+        'id': id,
+        'parent': parent,
+        'level': level,
+        'label': columnObj.table || columnObj.as || "unidentified table",
+        'alias': tableA || "?",
+        'width': 70,
+        'height': 70,
+        'isHighlighted': true,
+        'isExpanded': true,
+        'errorInfo': columnObj.errorInfo
+      });
+      // Add it to the temporary schema so we can expand it
+      if (tempSchema[columnObj.table || columnObj.as]) {
+        tempSchema[columnObj.table || columnObj.as].push(column);
+      } else {
+        tempSchema[columnObj.table || columnObj.as] = [column];
+      }
+    } else if (columnObj.errorInfo && columnObj.errorInfo.type == "table_ref_invalid_column") {
+      var nameForAlias = aliases[table];
+      if (nameForAlias) {
+        // Add this column to the schema
+        currentSchema[nameForAlias].push(column);
+      }
+      // Highlight the selection with red to show this column does not belong there
+      selection[table][column].errorInfo = columnObj.errorInfo;
+      // Find a corresponding node and add the error to it
+      var actualNode = nodes.find(n => n.label == columnObj.table || n.alias == columnObj.table);
+      if (actualNode) {
+        actualNode.errorInfo = columnObj.errorInfo;
+        actualNode.isHighlighted = true;
+        actualNode.isExpanded = true;
+      } else {
+        // No node found, it might be a level, so we add error to the level
+        levelsWithErrors.push({ name: columnObj.table, level: level+1, errorInfo: columnObj.errorInfo });
+      }
+    } else if (columnObj.errorInfo && columnObj.errorInfo.type == "with_ref_invalid_column") {
+      // WITH clauses are visualized by levels so we highlight the whole level
+      levelsWithErrors.push({ name: columnObj.table, level: level+1, errorInfo: columnObj.errorInfo });
+    }
       }
     // If there is no star and this element is a SQL aggregation, add it to the list of aggregations.
     } else if (columnObj['type'] == 'aggr_func') {
@@ -44342,7 +45244,6 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
       }
     } else {
       if (level == 0){
-        print(columnObj)
         throw Error('Unknown column type: ' + ast.where.type);
       }
     }
@@ -44353,13 +45254,29 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
   // Find if there is a groupby clause.
   if (ast.groupby != null) {
     for (var i in ast.groupby) {
-      var column = ast.groupby[i].column;
-      var table = getTable(column, schema, tables)[0];
+      if (ast.groupby[i].errorInfo) {
+        // Find a corresponding node and add the error to it
+        var columnObj = ast.groupby[i];
+        // The table is either specified or we get it manually from the schema
+        var table = ast.groupby[i].table ? ast.groupby[i].table : getTable(column, schema, tables)[0];
+        var actualNode = nodes.find(n => n.label == table || n.alias == table);
+        if (actualNode) {
+          actualNode.errorInfo = columnObj.errorInfo;
+          actualNode.isHighlighted = true;
+          actualNode.isExpanded = true;
+        } else {
+          // No node found, it might be a level, so we add error to the level
+          levelsWithErrors.push({ name: table, level: level+1, errorInfo: columnObj.errorInfo });
+        }
+      } else {
+        var column = ast.groupby[i].column;
+        var table = getTable(column, schema, tables)[0];
 
-      aggregation = `GROUP (${parseInt(i)+1})`;
+        aggregation = `GROUP (${parseInt(i)+1})`;
 
-      selection = addSelection(selection, aggregation, table, column, aliases);
-      setSelections(selection);
+        selection = addSelection(selection, aggregation, table, column, aliases);
+        setSelections(selection);
+      }
     }
   }
 
@@ -44369,6 +45286,10 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
       nodes = modifyNode(nodes, ast.with[i].name);
       if (ast.with[i].stmt != null) {
         var [subNodes, subLinks] = generateGraphTopLevel(element, ast.with[i].stmt, aliases, schema, level+1, ast.with[i].name);
+        if (ast.with[i].errorInfo) {
+          // The with clause has an error, so we mark the level as erroneous to highlight it
+          levelsWithErrors.push({ name: ast.with[i].name, level: level+1, errorInfo: ast.with[i].errorInfo });
+        }
 
         nodes = nodes.concat(subNodes);
         links = links.concat(subLinks);
@@ -44380,7 +45301,7 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
   // If there is a where clause, check the level within the tree.
   if (ast.where != null) {
     var [subNodes, subLinks] = generateGraphExpression(
-      element, ast.where, aliases, schema, level, parent, tables);
+      element, ast.where, aliases, schema, level, parent, tables, nodes, links, parent, level);
     nodes = nodes.concat(subNodes);
     links = links.concat(subLinks);
   }
@@ -44388,14 +45309,23 @@ function generateGraphTopLevel(element, ast, aliases, schema, level, parent) {
   return [nodes, links];
 }
 
+function modifyNode(nodes, instance) {
+  nodes = nodes.filter(function(n) {
+    if (n.label != instance) {
+      return n;
+    }
+  });
+  return nodes;
+}
 
-function generateGraphExpression(element, ast, aliases, schema, level, parent, tables) {
+
+function generateGraphExpression(element, ast, aliases, schema, level, parent, tables, graphNodes, graphLinks, originalParent, originalLevel) {
   if (ast.type == 'binary_expr') {
     // Special case: equality predicate
     if (ast.left.type == 'column_ref' && ast.right.type != 'select' && ast.right.type != 'expr_list') {
-      return [[], getLinks(ast, aliases, schema, tables)];
+      var linksAndNodes = getLinks(ast, aliases, schema, tables, graphNodes, graphLinks, originalParent, originalLevel);
+      return [linksAndNodes.nodes, linksAndNodes.links];
     } else if (ast.left.type == 'column_ref' && ast.right.type == 'select') {
-
       //something left
       // No link needs to be generated as it is not possible to connect an edge to a container.
 
@@ -44407,62 +45337,63 @@ function generateGraphExpression(element, ast, aliases, schema, level, parent, t
         level + 1, level);
 
       return [rNodes, rLinks];
-    } else if (ast.left.type == 'column_ref' && ast.right.type == 'expr_list') {    
-      var nodes = []
-      var links = []
+    } else if (ast.left.type == 'column_ref' && ast.right.type == 'expr_list') {   
+        var nodes = []
+        var links = []
 
-      for (var i in ast.right.value) {
-        var [rNodes, rLinks] = generateGraphTopLevel(
-        element,
-        ast.right.value[i],
-        aliases, schema,
-        level + 1, ast.operator);
+        for (var i in ast.right.value) {
+          var [rNodes, rLinks] = generateGraphTopLevel(
+          element,
+          ast.right.value[i],
+          aliases, schema,
+          level + 1, ast.operator);
 
-        nodes = nodes.concat(rNodes);
-        links = links.concat(rLinks);
-      }
-      
-      //Add the link to the operator container.
-      var column = ast.left.column
-      var table = ast.left.table || getTable(column, schema, tables)[0]
-      
-      // Check if there is an alias for this table
-      for (var alias in aliases) {
-        if (aliases[alias] == table) {
-          var tableA = alias;
+          nodes = nodes.concat(rNodes);
+          links = links.concat(rLinks);
         }
+        
+        //Add the link for where x not in y
+        var column = ast.left.column
+        var table = ast.left.table || getTable(column, schema, tables)[0]
+
+        // Check if there is an alias for this table
+        for (var alias in aliases) {
+          if (aliases[alias] == table) {
+            var tableA = alias;
+          }
+        }
+        var operator = ast.operator
+        var link = {};
+        link.sourceAlias = tableA || table
+        link.source = tableA || table
+        link.targetAlias = operator
+        link.target = operator
+        link.label = [column + ' ' + operator]
+        link.type = 'link'
+
+        links = links.concat(link)
+
+        return [nodes, links];
       }
-      var operator = ast.operator
-      var link = {};
-      link.sourceAlias = tableA || table
-      link.source = tableA || table
-      link.targetAlias = operator
-      link.target = operator
-      link.label = [column + ' ' + operator]
-      link.type = 'link'
-
-      links = links.concat(link)
-
-      return [nodes, links];
-    }
-
 
     var [lNodes, lLinks] = generateGraphExpression(
       element,
       ast.left,
       aliases, schema,
-      level + 'l', level, tables);
+      level + 'l', level,
+      tables, graphNodes, graphLinks, originalParent, originalLevel);
     var [rNodes, rLinks] = generateGraphExpression(
       element,
       ast.right,
       aliases, schema,
-      level + 'r', level, tables);
+      level + 'r', level,
+      tables, graphNodes, graphLinks, originalParent, originalLevel);
     return [lNodes.concat(rNodes), lLinks.concat(rLinks)];
 
   } else if (ast.type == 'unary_expr') {
     return generateGraphUnaryExpression(element, ast, aliases, schema, level+1, level);
   } else {
-    alert("Something might be wrong with your where clause, please check your query.")
+    alert("Something might be wrong with your where clause, please check your query.");
     throw Error('Unknown where type: ' + ast.type);
   }
 }
@@ -44486,29 +45417,127 @@ function generateGraphUnaryExpression(element, ast, aliases, schema, level, pare
   return [nodes, links];
 }
 
+function isARefToWithClause(table) {
+  for (var i in withClauses) {
+    var withRef = withClauses[i];
+    if (table == withRef.tableName) {
+      return true;
+    }
+  }
+  return false;
+}
+
+
 /**
 * Function to recursively retrieve all links from the where part of an AST.
 *
-* @param node     The root object of the where part of the AST.
-* @param aliases  An object containing all aliases and full names of tables in the from clauses.
-* @param schema   The schema of the current database.
-* @returns      An array of link objects, each containing source, target, type and label.
+* @param node 		The root object of the where part of the AST.
+* @param aliases 	An object containing all aliases and full names of tables in the from clauses.
+* @param schema 	The schema of the current database.
+* @returns 			An array of link objects, each containing source, target, type and label.
 */
-function getLinks(node, aliases, schema, tables) {
+function getLinks(node, aliases, schema, tables, graphNodes, graphLinks, parent, level) {
   if (isLeaf(node.left) && isLeaf(node.right)) {
     var link = {};
     link['label'] = [];
+    var nodes = [];
+
+    var errored = false;
+    var addNodeForLeft = false;
+    var addNodeForRight = false;
+    var idLeft = "?";
+    var idRight = "?";
+    // Check if the node is an error node and add that information to the link
+    if (node.left.errorInfo || node.right.errorInfo) {
+      errored = true;
+      link.error = true;
+      // Currently only propagating error from the left or right node, not both at the same time
+      link.errorInfo = node.left.errorInfo ? node.left.errorInfo : node.right.errorInfo;
+
+      var supportedTypes = ["ambiguous_column_ref", "ambiguous_column_ref_same_aliases", "invalid_table_ref"];
+      addNodeForLeft = node.left.errorInfo && $.inArray(node.left.errorInfo.type, supportedTypes) != -1; // -1 not found, any other number refers to index found in the array
+      addNodeForRight = node.right.errorInfo && $.inArray(node.right.errorInfo.type, supportedTypes) != -1;
+
+      if (addNodeForLeft && addNodeForRight) {
+        if (node.left.errorInfo.type == "ambiguous_column_ref" && node.left.errorInfo.type == "ambiguous_column_ref") {
+          // Both nodes are ambiguous column references, so we combine the error message
+          var erroredNode = {};
+          erroredNode.errorInfo = node.left.errorInfo;
+          erroredNode.errorInfo.header = "Ambiguous column references";
+          erroredNode.errorInfo.message = "Specify the name of the table for attributes: " + underline(node.left.errorInfo.ref.column);
+          if (node.left.errorInfo.validTables.length > 0) {
+            // If the left node has suggestions add them
+            erroredNode.errorInfo.message += " (did you mean to use table " + underlineArr(node.left.errorInfo.validTables).join(' or ') + "?)";
+          }
+
+          // Check if both column don't have the same name, otherwise we would be repeating ourselves in the error message
+          if (node.left.errorInfo.ref.column !== node.right.errorInfo.ref.column) {
+            erroredNode.errorInfo.message += " and " + underline(node.right.errorInfo.ref.column);
+            if (node.right.errorInfo.validTables.length > 0) {
+              // If the right node has suggestions add them as well
+              erroredNode.errorInfo.message += " (did you mean to use table " + underlineArr(node.right.errorInfo.validTables).join(' or ') + "?)";
+            }
+          }
+          nodes.push({ 
+            alias: "?",
+            height: 115,
+            label: "unspecified table",
+            level: level,
+            parent: parent? parent : -1,
+            width: 115,
+            isHighlighted: true,
+            errorInfo: erroredNode.errorInfo
+          });
+        } else {
+          console.warn("Unhandled case: both left and right node have an error reference! Node left: ", node.left);
+        }
+      } else if (addNodeForLeft) {
+        var erroredNode = node.left;
+        idLeft = (node.left.errorInfo.ref.column) + node.left.errorInfo.type;
+        nodes.push({ 
+          id: idLeft,
+          alias: erroredNode.errorInfo.ref.table? erroredNode.errorInfo.ref.table : "?",
+            height: 115,
+          label: erroredNode.errorInfo.ref.table? erroredNode.errorInfo.ref.table : "unspecified table",
+          level: level,
+          parent: parent? parent : -1,
+          width: 115,
+          isHighlighted: true,
+          errorInfo: erroredNode.errorInfo
+        });
+      } else if (addNodeForRight) {
+        var erroredNode = node.right;
+        idRight = (node.right.errorInfo.ref.column) + node.right.errorInfo.type
+        nodes.push({
+          id: idRight,
+          alias: erroredNode.errorInfo.ref.table? erroredNode.errorInfo.ref.table : "?", // changing alias solves problem
+          height: 115,
+          label: erroredNode.errorInfo.ref.table? erroredNode.errorInfo.ref.table : "unspecified table",
+          level: level,
+          parent: parent? parent : -1,
+          width: 115,
+          isHighlighted: true,
+          errorInfo: erroredNode.errorInfo
+        });
+      }
+    }
 
     //Left
     var leftTable = node.left.table;
     var leftColumn = node.left.column;
-    if (leftTable == null) {
+    if (leftTable == null && !addNodeForLeft) {
       leftTable = getTable(leftColumn, schema, tables)[0];
-
+    } else if (addNodeForLeft) {
+      leftTable = node.left.errorInfo.ref.table? node.left.errorInfo.ref.table : idLeft;
     }
     var leftFullName = aliases[leftTable] || leftTable;
     var text = leftFullName + '.' + leftColumn;
-    link['source'] = leftTable; //FIXME
+    link['source'] = leftTable;
+    if (isARefToWithClause(leftFullName)) {
+      link['leftIsWithRef'] = true;
+      link['leftWithTableName'] = leftFullName;
+      
+    }
 
     // Check if there is an unused alias for this link.
     if (leftTable == leftFullName) {
@@ -44525,7 +45554,7 @@ function getLinks(node, aliases, schema, tables) {
     //Operator
     var operator = node.operator;
     text += ' ' + operator + ' ';
-    link['label'].push(text);
+    link['label'].push((errored? "<span style='color:#FF0000'>" : "" ) + text);
 
     //Right
     if(node.right.type == 'column_ref') {
@@ -44534,38 +45563,67 @@ function getLinks(node, aliases, schema, tables) {
       // If no table is specified, it may still be a column, or it may be a condition.
       if (table == null) {
         var result = getTable(column, schema, tables);
-        var table = result[0];
+        var table;
+        // find out what the table name is
+        if (addNodeForRight) {
+          if (idRight) { // in case id exists, always use it
+            table = idRight;
+          } else if (node.right.errorInfo.ref.table) { // otherwise use table from the reference, if present
+            table = node.right.errorInfo.ref.table;
+          } else {
+            // error node was added without any name, so just reference '?' which should be the error node's name
+            table = "?";
+          }
+        } else {
+          table = result[0];
+        }
+
         var type = result[1];
         link['type'] = type;
         if (type == 'link') {
           var fullName = aliases[table] || table;
-          link['label'].push(fullName + '.' + column);
+          link['label'].push(fullName + '.' + column + (errored? "</span>" : "" ));
           link['target'] = fullName;
           link['targetAlias'] = table;
         } else {
           // For a condition, make a self-link.
           link['column'] = leftColumn;
           link['value'] = column;
-          link['label'].push(column);
+          link['label'].push(column + (errored? "</span>" : "" ));
         }
       } else {
         link['type'] = 'link';
         var fullName = aliases[table] || table;
-        link['label'].push(fullName + '.' + column);
+        link['label'].push(fullName + '.' + column + (errored? "</span>" : "" ));
         link['target'] = fullName;
         link['targetAlias'] = table;
+        if (isARefToWithClause(fullName)) {
+          link['rightIsWithRef'] = true;
+          link['rightWithTableName'] = fullName;
+        }
       }
-
-    } else if(node.right.type == 'number') {
+    } else if(node.right.type == 'number' || node.right.type == 'string') {
       // link to self.
       link['type'] = 'condition';
       link['column'] = leftColumn;
-      link['value'] = operator + node.right.value;
-      link['label'].push(node.right.value);
+      /* Put back the quotes around the value if the type is string
+          to emphasize that we are referring to a constant
+      */
+      link['value'] = operator + (node.right.type == 'string'? "'" + node.right.value + "'" : node.right.value);
+      link['label'].push(node.right.value + (errored? "</span>" : "" ));
+      if (link.errorInfo && link.errorInfo.type == 'table_ref_invalid_column') {
+        // The table exists but the column is invalid, reflect that on the actual node
+        var actualNode = graphNodes.find(n => n.alias == link.sourceAlias);
+        if (actualNode) {
+          actualNode.errorInfo = link.errorInfo;
+          actualNode.isHighlighted = true;
+          actualNode.isExpanded = true;
+        }
+      }
     } else {
       console.log('Some other type of node occurred!' + node.right.type);
     }
-    return [link];
+    return {nodes: nodes, links: [link]};
   }
 
   // Recurse.
@@ -44573,12 +45631,12 @@ function getLinks(node, aliases, schema, tables) {
   var linksRight = [];
 
   if (node.left != null) {
-    linksLeft = getLinks(node.left, aliases, schema, tables);
+    linksLeft = getLinks(node.left, aliases, schema, tables, graphNodes, graphLinks).links;
   }
   if (node.right != null) {
-    linksRight = getLinks(node.right, aliases, schema, tables);
+    linksRight = getLinks(node.right, aliases, schema, tables, graphNodes, graphLinks).links;
   }
-  return linksLeft.concat(linksRight);
+  return {nodes: [], links: linksLeft.concat(linksRight)};
 }
 
 var conditions;
@@ -44605,29 +45663,100 @@ function isLeaf(node) {
   return node.left == null && node.right == null;
 }
 
-function getTable(column, schema, tables=null) {
-  if (tables) {
-    for (var i=0; i<tables.length; i++) {
-      table = tables[i];
-      for (var col in schema[table]) {
-        if (schema[table][col] == column){
-          return [table, 'link'];
-        }
-      }
-    }
-    return [null, 'condition'];
-  } else {
-    for (var table in schema) {
-      for (col in schema[table]) {
-        if (schema[table][col] == column){
-          return [table, 'link'];
-        }
-      }
-    }
-    return [null, 'condition'];
-  }
+var tempSchema = [];
+var originalSchema;
+var currentSchema;
+
+function getSchemaWithTempValues() {
+  return {...currentSchema, ...tempSchema};
 }
 
+// Modified excerpt from https://github.com/thinkphp/String.levenshtein/blob/master/Source/String.levenshtein.js
+function levenshtein(str1, str2) {
+  var cost = new Array(),
+      n = str1.length,
+      m = str2.length,
+      i, j;
+
+  var minimum = function(a, b, c) {
+      var min = a;
+      if (b < min) {
+          min = b;
+      }
+      if (c < min) {
+          min = c;
+      }
+      return min;
+  }
+
+  if (n == 0) {
+      return;
+  }
+  if (m == 0) {
+      return;
+  }
+
+  for (var i = 0; i <= n; i++) {
+      cost[i] = new Array();
+  }
+
+  for (i = 0; i <= n; i++) {
+      cost[i][0] = i;
+  }
+
+  for (j = 0; j <= m; j++) {
+      cost[0][j] = j;
+  }
+
+  for (i = 1; i <= n; i++) {
+      var x = str1.charAt(i - 1);
+
+      for (j = 1; j <= m; j++) {
+          var y = str2.charAt(j - 1);
+
+          if (x == y) {
+              cost[i][j] = cost[i - 1][j - 1];
+          } else {
+              cost[i][j] = 1 + minimum(cost[i - 1][j - 1], cost[i][j - 1], cost[i - 1][j]);
+          }
+
+      }
+
+  }
+
+  return cost[n][m];
+}
+
+/**
+* A function to retrieve the table that the column belongs to if not specified in the query.
+*
+* @param column 	The string that might represent a column.
+* @param schema 	The schema of the current database.
+* @returns 			An object containing the corresponding table if it exists, else null. Also, the type, 'link' for 
+* 					an existing table, 'condition' for null.
+*/
+function getTable(column, schema, tables=null) {
+	if (tables) {
+		for (var i=0; i<tables.length; i++) {
+			table = tables[i];
+			for (var col in schema[table]) {
+				if (schema[table][col] == column){
+					return [table, 'link'];
+				}
+			}
+		}
+		return [null, 'condition'];
+	} else {
+		for (var table in schema) {
+			for (col in schema[table]) {
+				if (schema[table][col] == column){
+					return [table, 'link'];
+				}
+			}
+		}
+		return [null, 'condition'];
+	}
+}
 
 define('viz', ['d3'], function (d3) {
   var d3 = d3;
