@@ -1,5 +1,3 @@
-Coming soon: SQLVis+, with error messages and error repairs for select syntax errors!
-
 # SQLvis
 
 A library to generate a *graph-based* visualization of SQL queries in **Jupyter Notebooks**. More information on Jupyter Notebooks is [here](https://jupyter.org).
@@ -108,7 +106,8 @@ WHERE EXISTS (
 | ------------------------------------------------------------ | ------------------------------------------------------------ |
 | <img src="https://github.com/Giraphne/SQLvis/raw/main/images/subquery.png"> | This visualization displays a subquery. The two tables in the subquery are purchase and product. You can see that these are wrapped in a colored rectangle. The visualization can als represent nesting on higher levels. The deeper the nesting, the darker the color. |
 
-
+### SQLVis+
+SQLVis+ is an extension to the original SQLVis implementation which handles select syntax errors. In case of referencing syntax errors such as incorrect references to database objects (tables or columns) the extension will produce error visualizations. These error visualizations contain enhanced error messages designed to guide the user to the root of the problem.
 
 ## License
 
