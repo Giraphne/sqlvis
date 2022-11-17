@@ -43703,12 +43703,10 @@ function visualize(query, schema, container, d3) {
   currentSchema = schema;
   // Strip ; from the query as this will cause errors in the AST generation.
   var stripped_query = query.replace(/;/, '');
-  // Replace '' with "" to make the AST see the strings correctly
-  var quoted_query = stripped_query.replace(/'/g,'"')
 
   // Generate the AST.
   try{
-    var ast = parse_sql(quoted_query);
+    var ast = parse_sql(stripped_query);
   } catch (e) {
     //container.text(e)
     //return;
@@ -43986,45 +43984,22 @@ function drawGraph(vertices, links, container, d3, schema) {
     for (var v in vertices) {
       // Check if vertex is part of a view.
       if (typeof vertices[v].parent == 'string') {
-        if (false) {
-          graph.setNode(vertices[v].parent + '-parent', {
-            label: vertices[v].parent + '-parent',
+        var levelError = levelsWithErrors.find(l => l.name == vertices[v].parent);
+        if (levelError) {
+          graph.setNode(vertices[v].parent, {
+            label: vertices[v].parent,
+            clusterLabelPos: 'top',
+            style: 'fill: ' + color + '40; stroke-width: 1px; stroke: #FF0000',
+            errorInfo: levelError.errorInfo
+            });
+        } else {
+          graph.setNode(vertices[v].parent, {
+            label: vertices[v].parent,
             clusterLabelPos: 'top',
             style: 'fill: ' + color + '40; stroke-width: 0px; stroke: ' + color
           });
-
-          graph.setNode(vertices[v].parent, {
-            label: '',
-            width: 0,
-            height: 0,
-            paddingLeft: 0,
-            paddingRight: 0,
-            paddingTop: 0,
-            paddingBottom: 0,
-          });
-
-          graph.setParent(vertices[v].alias, vertices[v].parent + '-parent');
-          graph.setParent(vertices[v].parent, vertices[v].parent + '-parent');
-        } else {
-          var levelError = levelsWithErrors.find(l => l.name == vertices[v].parent);
-          if (levelError) {
-            graph.setNode(vertices[v].parent, {
-              label: vertices[v].parent,
-              clusterLabelPos: 'top',
-              style: 'fill: ' + color + '40; stroke-width: 1px; stroke: #FF0000',
-              errorInfo: levelError.errorInfo
-              });
-          } else {
-            graph.setNode(vertices[v].parent, {
-              label: vertices[v].parent,
-              clusterLabelPos: 'top',
-              style: 'fill: ' + color + '40; stroke-width: 0px; stroke: ' + color
-            });
-          }
-          graph.setParent(vertices[v].alias, vertices[v].parent);
         }
-
-        //        graph.setParent(vertices[v].alias, '1')
+        graph.setParent(vertices[v].id? vertices[v].id : vertices[v].alias, vertices[v].parent);
       } else {
         // Ignore the root level
         if (vertices[v].parent > 0) {
@@ -45532,7 +45507,7 @@ function getLinks(node, aliases, schema, tables, graphNodes, graphLinks, parent,
     }
     var leftFullName = aliases[leftTable] || leftTable;
     var text = leftFullName + '.' + leftColumn;
-    link['source'] = leftTable;
+    link['source'] = addNodeForLeft && idLeft !== "?"? idLeft : leftTable;
     if (isARefToWithClause(leftFullName)) {
       link['leftIsWithRef'] = true;
       link['leftWithTableName'] = leftFullName;
@@ -45541,14 +45516,14 @@ function getLinks(node, aliases, schema, tables, graphNodes, graphLinks, parent,
 
     // Check if there is an unused alias for this link.
     if (leftTable == leftFullName) {
-      link['sourceAlias'] = leftTable;
+      link['sourceAlias'] = addNodeForLeft && idLeft !== "?"? idLeft : leftTable;
       for (var alias in aliases) {
         if (aliases[alias] == leftTable) {
-          link['sourceAlias'] = alias;
+          link['sourceAlias'] = addNodeForLeft && idLeft !== "?"? idLeft : alias;
         }
       }
     } else {
-      link['sourceAlias'] = leftTable;
+      link['sourceAlias'] = addNodeForLeft && idLeft !== "?"? idLeft : leftTable;
     }
 
     //Operator
@@ -45583,8 +45558,8 @@ function getLinks(node, aliases, schema, tables, graphNodes, graphLinks, parent,
         if (type == 'link') {
           var fullName = aliases[table] || table;
           link['label'].push(fullName + '.' + column + (errored? "</span>" : "" ));
-          link['target'] = fullName;
-          link['targetAlias'] = table;
+          link['target'] = addNodeForRight && idRight !== "?"? idRight : fullName;
+          link['targetAlias'] = addNodeForRight && idRight !== "?"? idRight : table;
         } else {
           // For a condition, make a self-link.
           link['column'] = leftColumn;
@@ -45595,8 +45570,8 @@ function getLinks(node, aliases, schema, tables, graphNodes, graphLinks, parent,
         link['type'] = 'link';
         var fullName = aliases[table] || table;
         link['label'].push(fullName + '.' + column + (errored? "</span>" : "" ));
-        link['target'] = fullName;
-        link['targetAlias'] = table;
+        link['target'] = addNodeForRight && idRight !== "?"? idRight : fullName;
+        link['targetAlias'] = addNodeForRight && idRight !== "?"? idRight : table;
         if (isARefToWithClause(fullName)) {
           link['rightIsWithRef'] = true;
           link['rightWithTableName'] = fullName;
