@@ -75,6 +75,13 @@ svg .node text {
 	border-right: 2px solid rgb(255, 160, 0);
 	background-color: rgba(255, 160, 0, 0.2);
 }
+
+.output_subarea .node td.selection, .node th.erroredSelection {
+	border-left: 2px solid rgb(255, 0, 0);
+	border-right: 2px solid rgb(255, 0, 0);
+	background-color: rgba(255, 0, 0, 0.2);
+}
+
 .output_subarea .node tr:first-child td.selection, 
 .output_subarea .node tr:first-child th.selection {
 	border-top: 2px solid rgb(255, 160, 0);
@@ -83,6 +90,16 @@ svg .node text {
 .output_subarea .node tr:last-child td.selection, 
 .output_subarea .node tr:last-child th.selection {
 	border-bottom: 2px solid rgb(255, 160, 0);
+}
+
+.output_subarea .node tr:first-child td.erroredSelection, 
+.output_subarea .node tr:first-child th.erroredSelection {
+	border-top: 2px solid rgb(255, 0, 0);
+}
+
+.output_subarea .node tr:last-child td.erroredSelection, 
+.output_subarea .node tr:last-child th.erroredSelection {
+	border-bottom: 2px solid rgb(255, 0, 0);
 }
 
 .output_subarea .node td.condition.selection div {
@@ -104,8 +121,19 @@ svg .node text {
 	stroke-width: 2px;
 }
 
+.output_subarea .nodes .erroredRect rect {
+	fill: rgb(228, 230, 244);
+	color: white;
+	stroke: rgb(255, 0, 0);
+	stroke-width: 2px;
+}
+
 .output_subarea .node .alias {
 	color: rgb(77,52,239);
+}
+
+.output_subarea .node .erroredAlias {
+	color: rgb(255,0,0);
 }
 
 .output_subarea g.label div {
@@ -116,5 +144,24 @@ svg .node text {
 	stroke: #333;
 	fill: #333;
 	stroke-width: 1.5px;
+}
+
+.output_subarea .errorEdgePath path {
+	stroke: #ff0000;
+	fill: #ff0000;
+	stroke-width: 1.5px;
+}
+
+div.tooltip {	
+    position: absolute;			
+    text-align: center;			
+    width: 190px;					
+    height: 100px;					
+    padding: 2px;				
+    font: 13px Arial;		
+    background: lightsteelblue;	
+    border: 0px;		
+    border-radius: 8px;			
+    pointer-events: none;			
 }
 </style>
